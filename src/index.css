@@ -32,6 +32,15 @@
     --sidebar-accent-foreground: 210 30% 92%;
     --sidebar-border: 220 15% 15%;
     --sidebar-ring: 174 80% 45%;
+    --block-bg: 220 18% 14%;
+    --block-border: 174 80% 35%;
+    --equation-bg: 220 20% 10%;
+    --panel-bg: 220 18% 11%;
+    --signal-color: 174 80% 45%;
+    --junction-bg: 196 85% 50%;
+    --warning: 38 92% 50%;
+    --success: 142 76% 36%;
+    --info: 199 89% 48%;
   }
 
   * {
@@ -41,5 +50,67 @@
   body {
     @apply bg-background text-foreground;
     font-family: 'Courier New', monospace;
+  }
+}
+
+@layer components {
+  .tf-block {
+    background-color: hsl(var(--block-bg));
+    border: 1px solid hsl(var(--block-border));
+  }
+
+  .eq-display {
+    background-color: hsl(var(--equation-bg));
+    border: 1px solid hsl(var(--border));
+  }
+
+  .panel-section {
+    background-color: hsl(var(--panel-bg));
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+  }
+
+  .result-display {
+    background-color: hsl(var(--equation-bg));
+    border: 1px solid hsl(var(--primary) / 0.3);
+  }
+
+  .btn-glow {
+    background-color: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+    box-shadow: 0 0 16px hsl(var(--primary) / 0.4);
+    transition: box-shadow 0.2s, background-color 0.2s;
+  }
+
+  .btn-glow:hover {
+    background-color: hsl(var(--accent));
+    box-shadow: 0 0 24px hsl(var(--accent) / 0.5);
+  }
+
+  .badge-series {
+    background-color: hsl(var(--primary) / 0.15);
+    color: hsl(var(--primary));
+    border: 1px solid hsl(var(--primary) / 0.3);
+  }
+
+  .badge-parallel {
+    background-color: hsl(var(--accent) / 0.15);
+    color: hsl(var(--accent));
+    border: 1px solid hsl(var(--accent) / 0.3);
+  }
+
+  .badge-feedback {
+    background-color: hsl(var(--warning) / 0.15);
+    color: hsl(var(--warning));
+    border: 1px solid hsl(var(--warning) / 0.3);
+  }
+
+  .identity-card {
+    background-color: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+  }
+
+  .identity-card:hover {
+    border-color: hsl(var(--primary) / 0.4);
   }
 }
