@@ -1,73 +1,46 @@
 import React, { useState, useCallback } from "react";
-import {
-  simplify,
-  BlockConfig,
-  SimplificationResult,
-  ConnectionType,
-} from "@/lib/transferFunctions";
+import { solve, SolverResult, ConnectionType, stabilityLabel } from "@/lib/solver";
 import { BlockDiagram } from "@/components/BlockDiagram";
-import { ResultPanel } from "@/components/ResultPanel";
 import { SanityLibrary } from "@/components/SanityLibrary";
+import { StateSpacePanel } from "@/components/StateSpacePanel";
 import { cn } from "@/lib/utils";
 
-type ConnectionMode = ConnectionType | "unity_feedback";
+type ConnectionMode = ConnectionType;
 
 const CONNECTION_OPTIONS: { value: ConnectionMode; label: string; desc: string; icon: string }[] = [
-  {
-    value: "series",
-    label: "Series (Cascade)",
-    desc: "G_eq = G₁·G₂·...·Gₙ",
-    icon: "→",
-  },
-  {
-    value: "parallel",
-    label: "Parallel",
-    desc: "G_eq = G₁ + G₂ + ...",
-    icon: "⊕",
-  },
-  {
-    value: "feedback_negative",
-    label: "Negative Feedback",
-    desc: "G_eq = G/(1+GH)",
-    icon: "↩",
-  },
-  {
-    value: "unity_feedback",
-    label: "Unity Feedback",
-    desc: "G_eq = G/(1+G)",
-    icon: "↺",
-  },
-  {
-    value: "feedback_positive",
-    label: "Positive Feedback",
-    desc: "G_eq = G/(1−GH)",
-    icon: "↑",
-  },
+  { value: "series",           label: "Series (Cascade)",  desc: "G_eq = G₁·G₂·...·Gₙ", icon: "→" },
+  { value: "parallel",         label: "Parallel",          desc: "G_eq = G₁ + G₂ + ...", icon: "⊕" },
+  { value: "feedback_negative",label: "Negative Feedback", desc: "G_eq = G/(1+GH)",        icon: "↩" },
+  { value: "unity_feedback",   label: "Unity Feedback",    desc: "G_eq = G/(1+G)",         icon: "↺" },
+  { value: "feedback_positive",label: "Positive Feedback", desc: "G_eq = G/(1−GH)",        icon: "↑" },
 ];
 
-const DEFAULT_BLOCKS: BlockConfig[] = [
-  { id: "g1", label: "G₁", tf: { num: "K₁", den: "s + a₁" } },
-  { id: "g2", label: "G₂", tf: { num: "K₂", den: "s + a₂" } },
+type BlockState = { id: string; label: string; num: string; den: string };
+
+const DEFAULT_BLOCKS: BlockState[] = [
+  { id: "g1", label: "G₁", num: "1", den: "s + 1" },
+  { id: "g2", label: "G₂", num: "2", den: "s + 2" },
 ];
+const DEFAULT_FEEDBACK: BlockState = { id: "h1", label: "H", num: "1", den: "1" };
 
-const DEFAULT_FEEDBACK: BlockConfig = {
-  id: "h1",
-  label: "H",
-  tf: { num: "1", den: "1" },
-};
-
+// ─── Typed block input component ─────────────────────────────────────────────
 function TFInput({
   label,
-  tf,
+  num,
+  den,
   onChange,
+  hint,
 }: {
   label: string;
-  tf: { num: string; den: string };
-  onChange: (tf: { num: string; den: string }) => void;
+  num: string;
+  den: string;
+  onChange: (num: string, den: string) => void;
+  hint?: string;
 }) {
   return (
     <div className="tf-block rounded-lg p-3">
       <div className="text-xs font-bold text-primary mb-2 font-mono">{label}</div>
+      {hint && <div className="text-[10px] text-muted-foreground/60 font-mono mb-1.5">{hint}</div>}
       <div className="space-y-1.5">
         <div>
           <label className="text-[10px] text-muted-foreground uppercase tracking-wider block mb-0.5">
@@ -75,9 +48,9 @@ function TFInput({
           </label>
           <input
             type="text"
-            value={tf.num}
-            onChange={(e) => onChange({ ...tf, num: e.target.value })}
-            placeholder="e.g. K, s+1, s²+2s+1"
+            value={num}
+            onChange={e => onChange(e.target.value, den)}
+            placeholder="e.g. 1, s+1, 2s^2+3s+1"
             className="w-full bg-secondary/70 border border-border rounded px-2 py-1 text-xs font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary transition-colors"
           />
         </div>
@@ -88,9 +61,9 @@ function TFInput({
           </label>
           <input
             type="text"
-            value={tf.den}
-            onChange={(e) => onChange({ ...tf, den: e.target.value })}
-            placeholder="e.g. s, s+2, s²+3s+2"
+            value={den}
+            onChange={e => onChange(num, e.target.value)}
+            placeholder="e.g. s, s+2, s^2+3s+2"
             className="w-full bg-secondary/70 border border-border rounded px-2 py-1 text-xs font-mono text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:border-primary transition-colors"
           />
         </div>
@@ -99,52 +72,197 @@ function TFInput({
   );
 }
 
+// ─── Result panel ─────────────────────────────────────────────────────────────
+function ResultPanel({ result, error }: { result: SolverResult | null; error: string }) {
+  const [showDerivation, setShowDerivation] = useState(false);
+
+  if (error) {
+    return (
+      <div className="panel-section p-4">
+        <div className="text-xs text-destructive font-mono bg-destructive/10 border border-destructive/20 rounded p-3">
+          ⚠️ {error}
+        </div>
+      </div>
+    );
+  }
+
+  if (!result) {
+    return (
+      <div className="panel-section p-6 text-center">
+        <div className="text-4xl mb-3 opacity-30">⚡</div>
+        <p className="text-sm text-muted-foreground">
+          Configure your block diagram and click{" "}
+          <strong className="text-primary">Calculate G_eq(s)</strong> to see the exact typed result.
+        </p>
+        <p className="text-[11px] text-muted-foreground/60 mt-2 font-mono">
+          Powered by exact polynomial arithmetic · GCD simplification · Stability analysis
+        </p>
+      </div>
+    );
+  }
+
+  const stab = stabilityLabel(result.stability);
+  const connLabel = CONNECTION_OPTIONS.find(o => o.value === result.connectionType)?.label ?? result.connectionType;
+
+  return (
+    <div className="panel-section overflow-hidden">
+      {/* Header */}
+      <div className="px-4 py-3 border-b border-border flex items-center gap-3 flex-wrap">
+        <span className="text-[10px] font-mono px-2 py-0.5 rounded font-semibold badge-series">
+          {connLabel}
+        </span>
+        <span className={cn("text-[10px] font-mono px-2 py-0.5 rounded font-semibold border", stab.color,
+          result.stability === "stable" ? "bg-success/10 border-success/30" :
+          result.stability === "unstable" ? "bg-destructive/10 border-destructive/30" :
+          "bg-warning/10 border-warning/30"
+        )}>
+          {stab.label}
+        </span>
+        <h3 className="text-sm font-bold text-foreground">G_eq(s)</h3>
+      </div>
+
+      <div className="p-4 space-y-4">
+        {/* Main TF result — exact polynomial form */}
+        <div className="result-display rounded-lg p-4">
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-2">
+            Exact G_eq(s) — Polynomial Arithmetic Result
+          </div>
+          <div className="flex flex-col items-start gap-1">
+            <div className="text-sm font-mono text-primary font-medium leading-relaxed break-all">
+              {result.display.num}
+            </div>
+            <div className="h-px w-full bg-primary/40" />
+            <div className="text-sm font-mono text-foreground/80 leading-relaxed break-all">
+              {result.display.den}
+            </div>
+          </div>
+        </div>
+
+        {/* Formula identity */}
+        <div>
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Identity Applied</div>
+          <div className="eq-display rounded px-3 py-2 text-xs font-mono text-accent leading-relaxed break-all">
+            {result.formula}
+          </div>
+        </div>
+
+        {/* Characteristic equation */}
+        <div className="bg-secondary/50 rounded px-3 py-2">
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Characteristic Equation</div>
+          <div className="text-xs font-mono text-warning break-all">{result.charEq}</div>
+        </div>
+
+        {/* Poles & Zeros */}
+        <div className="grid grid-cols-2 gap-2">
+          <div className="bg-secondary/50 rounded px-3 py-2">
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Closed-Loop Poles</div>
+            {result.poles.length === 0 ? (
+              <div className="text-xs font-mono text-muted-foreground">None</div>
+            ) : result.poles.map((p, i) => (
+              <div key={i} className={cn("text-xs font-mono", isNaN(p.re) ? "text-muted-foreground" : p.re > 1e-8 ? "text-destructive" : "text-foreground/90")}>
+                s = {isNaN(p.re) ? `solve: ${result.charEq}` : `${p.re > 0 ? "+" : ""}${p.re.toFixed(4)}${Math.abs(p.im) > 1e-10 ? ` ± j${Math.abs(p.im).toFixed(4)}` : ""}`}
+              </div>
+            ))}
+          </div>
+          <div className="bg-secondary/50 rounded px-3 py-2">
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Zeros</div>
+            {result.zeros.length === 0 ? (
+              <div className="text-xs font-mono text-muted-foreground">None</div>
+            ) : result.zeros.map((z, i) => (
+              <div key={i} className="text-xs font-mono text-foreground/90">
+                s = {isNaN(z.re) ? "?" : `${z.re.toFixed(4)}${Math.abs(z.im) > 1e-10 ? ` ± j${Math.abs(z.im).toFixed(4)}` : ""}`}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Derivation accordion */}
+        <div>
+          <button
+            onClick={() => setShowDerivation(!showDerivation)}
+            className="w-full flex items-center justify-between text-xs font-semibold text-muted-foreground hover:text-foreground uppercase tracking-wider py-1 border-t border-border pt-3"
+          >
+            <span>Step-by-Step Algebraic Derivation</span>
+            <span>{showDerivation ? "▲" : "▼"}</span>
+          </button>
+          {showDerivation && (
+            <ol className="mt-2 space-y-1.5">
+              {result.derivation.map((step, i) => (
+                <li key={i} className="flex gap-2 text-xs">
+                  <span className="text-muted-foreground font-mono flex-shrink-0 w-4">{i + 1}.</span>
+                  <span className={cn(
+                    "font-mono leading-relaxed break-all",
+                    step.includes("⚠️") || step.includes("❌") ? "text-warning" :
+                    step.includes("🔑") ? "text-accent" :
+                    step === "" ? "hidden" :
+                    "text-foreground/85"
+                  )}>
+                    {step}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Numeric presets (use parseable polynomial strings) ───────────────────────
 const PRESETS = [
   {
-    label: "First-Order (RL circuit)",
+    label: "First-Order Unity Feedback",
     connection: "unity_feedback" as ConnectionMode,
-    blocks: [{ id: "g1", label: "G", tf: { num: "K", den: "Ts + 1" } }],
+    blocks: [{ id: "g1", label: "G", num: "1", den: "s + 1" }],
     feedbackBlock: DEFAULT_FEEDBACK,
   },
   {
-    label: "Second-Order System",
+    label: "Second-Order (ωn=2, ζ=0.5)",
     connection: "unity_feedback" as ConnectionMode,
-    blocks: [{ id: "g1", label: "G", tf: { num: "wn^2", den: "s(s + 2*z*wn)" } }],
+    blocks: [{ id: "g1", label: "G", num: "4", den: "s^2 + 2s" }],
     feedbackBlock: DEFAULT_FEEDBACK,
   },
   {
-    label: "DC Motor (Cascade)",
+    label: "Double Integrator w/ Feedback",
+    connection: "unity_feedback" as ConnectionMode,
+    blocks: [{ id: "g1", label: "G", num: "1", den: "s^2" }],
+    feedbackBlock: DEFAULT_FEEDBACK,
+  },
+  {
+    label: "Series: Two First-Order Plants",
     connection: "series" as ConnectionMode,
     blocks: [
-      { id: "g1", label: "G_arm", tf: { num: "1", den: "Ls + R" } },
-      { id: "g2", label: "G_mech", tf: { num: "Kₜ", den: "Js + B" } },
-    ],
-    feedbackBlock: DEFAULT_FEEDBACK,
-  },
-  {
-    label: "PD + Plant",
-    connection: "series" as ConnectionMode,
-    blocks: [
-      { id: "g1", label: "C(s)", tf: { num: "Kd·s + Kp", den: "1" } },
-      { id: "g2", label: "P(s)", tf: { num: "1", den: "ms + b" } },
+      { id: "g1", label: "G₁", num: "1", den: "s + 1" },
+      { id: "g2", label: "G₂", num: "2", den: "s + 2" },
     ],
     feedbackBlock: DEFAULT_FEEDBACK,
   },
   {
     label: "Tachometer Feedback",
     connection: "feedback_negative" as ConnectionMode,
-    blocks: [{ id: "g1", label: "G", tf: { num: "K", den: "s(s+1)" } }],
-    feedbackBlock: { id: "h1", label: "H", tf: { num: "Kₜs", den: "1" } },
+    blocks: [{ id: "g1", label: "G", num: "10", den: "s^2 + s" }],
+    feedbackBlock: { id: "h1", label: "H", num: "2s", den: "1" },
+  },
+  {
+    label: "Parallel: Proportional + Integral",
+    connection: "parallel" as ConnectionMode,
+    blocks: [
+      { id: "g1", label: "P", num: "2", den: "1" },
+      { id: "g2", label: "I", num: "1", den: "s" },
+    ],
+    feedbackBlock: DEFAULT_FEEDBACK,
   },
 ];
 
+// ─── Main page ────────────────────────────────────────────────────────────────
 export default function Index() {
   const [connectionType, setConnectionType] = useState<ConnectionMode>("series");
-  const [blocks, setBlocks] = useState<BlockConfig[]>(DEFAULT_BLOCKS);
-  const [feedbackBlock, setFeedbackBlock] = useState<BlockConfig>(DEFAULT_FEEDBACK);
-  const [result, setResult] = useState<SimplificationResult | null>(null);
+  const [blocks, setBlocks] = useState<BlockState[]>(DEFAULT_BLOCKS);
+  const [feedbackBlock, setFeedbackBlock] = useState<BlockState>(DEFAULT_FEEDBACK);
+  const [result, setResult] = useState<SolverResult | null>(null);
   const [error, setError] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<"builder" | "library">("builder");
+  const [activeTab, setActiveTab] = useState<"builder" | "statespace" | "library">("builder");
   const [showPresets, setShowPresets] = useState(false);
 
   const needsFeedback = connectionType === "feedback_negative" || connectionType === "feedback_positive";
@@ -153,20 +271,24 @@ export default function Index() {
   const handleCalculate = useCallback(() => {
     try {
       setError("");
-      // Validate inputs
       for (const b of blocks) {
-        if (!b.tf.num.trim() || !b.tf.den.trim()) {
+        if (!b.num.trim() || !b.den.trim()) {
           throw new Error(`Block ${b.label}: numerator and denominator cannot be empty.`);
         }
       }
-      if (needsFeedback && !feedbackBlock.tf.num.trim()) {
+      if (needsFeedback && !feedbackBlock.num.trim()) {
         throw new Error("Feedback block H(s): numerator cannot be empty.");
       }
 
-      const res = simplify(
-        connectionType as any,
-        blocks,
-        needsFeedback ? feedbackBlock : undefined
+      const activeBlocks = needsFeedback || connectionType === "unity_feedback"
+        ? [blocks[0]] : blocks;
+
+      const res = solve(
+        connectionType,
+        activeBlocks.map(b => ({ id: b.id, label: b.label, numStr: b.num, denStr: b.den })),
+        needsFeedback
+          ? { id: feedbackBlock.id, label: feedbackBlock.label, numStr: feedbackBlock.num, denStr: feedbackBlock.den }
+          : undefined
       );
       setResult(res);
     } catch (e: any) {
@@ -177,23 +299,16 @@ export default function Index() {
 
   const addBlock = () => {
     const n = blocks.length + 1;
-    setBlocks([
-      ...blocks,
-      {
-        id: `g${n}`,
-        label: `G${n}`,
-        tf: { num: "K", den: "s + a" },
-      },
-    ]);
+    setBlocks([...blocks, { id: `g${n}`, label: `G${n}`, num: "1", den: "s + 1" }]);
   };
 
   const removeBlock = (id: string) => {
     if (blocks.length <= 2) return;
-    setBlocks(blocks.filter((b) => b.id !== id));
+    setBlocks(blocks.filter(b => b.id !== id));
   };
 
-  const updateBlock = (id: string, tf: { num: string; den: string }) => {
-    setBlocks(blocks.map((b) => (b.id === id ? { ...b, tf } : b)));
+  const updateBlock = (id: string, num: string, den: string) => {
+    setBlocks(blocks.map(b => b.id === id ? { ...b, num, den } : b));
   };
 
   const applyPreset = (preset: typeof PRESETS[0]) => {
@@ -204,6 +319,19 @@ export default function Index() {
     setError("");
     setShowPresets(false);
   };
+
+  // Convert BlockState to BlockConfig for BlockDiagram
+  const diagramBlocks = (needsFeedback || connectionType === "unity_feedback" ? [blocks[0]] : blocks)
+    .map(b => ({ id: b.id, label: b.label, tf: { num: b.num, den: b.den } }));
+  const diagramFeedback = needsFeedback
+    ? { id: feedbackBlock.id, label: feedbackBlock.label, tf: { num: feedbackBlock.num, den: feedbackBlock.den } }
+    : undefined;
+
+  const TAB_LABELS: { id: "builder" | "statespace" | "library"; icon: string; label: string }[] = [
+    { id: "builder",    icon: "⚙",  label: "Builder" },
+    { id: "statespace", icon: "Σ",  label: "State-Space" },
+    { id: "library",    icon: "📚", label: "Library" },
+  ];
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -220,34 +348,32 @@ export default function Index() {
               Block Diagram Simplifier
             </h1>
             <p className="text-[10px] text-muted-foreground font-mono">
-              U(s) → G(s) → C(s) · Transfer Function Calculator
+              U(s) → G(s) → C(s) · Exact Polynomial Arithmetic · State-Space Conversion
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] text-muted-foreground font-mono hidden sm:block">
-            CSUN ME · CSUN Ch.1 · Nise · Ogata · Franklin
-          </span>
+        <div className="hidden sm:flex items-center gap-1 text-[10px] text-muted-foreground font-mono">
+          Nise · Ogata · Franklin
         </div>
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left Panel — Builder / Library */}
+        {/* Left Panel */}
         <div className="w-80 flex-shrink-0 border-r border-border flex flex-col bg-card">
           {/* Tab switcher */}
           <div className="flex border-b border-border">
-            {(["builder", "library"] as const).map((tab) => (
+            {TAB_LABELS.map(tab => (
               <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
                 className={cn(
-                  "flex-1 py-2.5 text-xs font-semibold tracking-wide uppercase transition-all",
-                  activeTab === tab
+                  "flex-1 py-2.5 text-[10px] font-semibold tracking-wide uppercase transition-all",
+                  activeTab === tab.id
                     ? "text-primary border-b-2 border-primary bg-primary/5"
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
-                {tab === "builder" ? "⚙ Builder" : "📚 Library"}
+                {tab.icon} {tab.label}
               </button>
             ))}
           </div>
@@ -285,20 +411,14 @@ export default function Index() {
                   Connection Type
                 </label>
                 <div className="space-y-1.5">
-                  {CONNECTION_OPTIONS.map((opt) => (
+                  {CONNECTION_OPTIONS.map(opt => (
                     <button
                       key={opt.value}
                       onClick={() => {
                         setConnectionType(opt.value);
                         setResult(null);
                         setError("");
-                        // Adjust blocks for connection type
-                        if (
-                          (opt.value === "feedback_negative" ||
-                            opt.value === "feedback_positive" ||
-                            opt.value === "unity_feedback") &&
-                          blocks.length > 1
-                        ) {
+                        if ((opt.value === "feedback_negative" || opt.value === "feedback_positive" || opt.value === "unity_feedback") && blocks.length > 1) {
                           setBlocks([blocks[0]]);
                         }
                       }}
@@ -323,9 +443,7 @@ export default function Index() {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-[10px] text-muted-foreground uppercase tracking-wider">
-                    {needsFeedback || connectionType === "unity_feedback"
-                      ? "Forward Path G(s)"
-                      : "Transfer Function Blocks"}
+                    {needsFeedback || connectionType === "unity_feedback" ? "Forward Path G(s)" : "Transfer Function Blocks"}
                   </label>
                   {needsMultiBlock && (
                     <button
@@ -337,15 +455,14 @@ export default function Index() {
                   )}
                 </div>
                 <div className="space-y-2">
-                  {(needsFeedback || connectionType === "unity_feedback"
-                    ? [blocks[0]]
-                    : blocks
-                  ).map((block) => (
+                  {(needsFeedback || connectionType === "unity_feedback" ? [blocks[0]] : blocks).map(block => (
                     <div key={block.id} className="relative">
                       <TFInput
-                        label={block.label + "(s)"}
-                        tf={block.tf}
-                        onChange={(tf) => updateBlock(block.id, tf)}
+                        label={`${block.label}(s)`}
+                        num={block.num}
+                        den={block.den}
+                        onChange={(num, den) => updateBlock(block.id, num, den)}
+                        hint="e.g. num: 1  den: s+1  →  G(s)=1/(s+1)"
                       />
                       {needsMultiBlock && blocks.length > 2 && (
                         <button
@@ -368,25 +485,40 @@ export default function Index() {
                   </label>
                   <TFInput
                     label="H(s)"
-                    tf={feedbackBlock.tf}
-                    onChange={(tf) => setFeedbackBlock({ ...feedbackBlock, tf })}
+                    num={feedbackBlock.num}
+                    den={feedbackBlock.den}
+                    onChange={(num, den) => setFeedbackBlock({ ...feedbackBlock, num, den })}
                   />
                 </div>
               )}
 
               {connectionType === "unity_feedback" && (
                 <div className="eq-display rounded px-3 py-2 text-[10px] font-mono text-muted-foreground">
-                  Unity feedback: H(s) = 1 (identity sensor, no dynamics)
+                  Unity feedback: H(s) = 1 · Uses exact N_G / (D_G + N_G) identity
                 </div>
               )}
 
-              {/* Calculate button */}
+              {/* Info banner */}
+              <div className="eq-display rounded px-3 py-2">
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Polynomial Solver</div>
+                <div className="text-[10px] font-mono text-muted-foreground leading-snug">
+                  Coefficients are parsed into exact number arrays · GCD cancellation · Stability via pole real parts
+                </div>
+              </div>
+
               <button
                 onClick={handleCalculate}
                 className="btn-glow w-full py-2.5 rounded-lg text-sm font-bold tracking-wide"
               >
                 ⚡ Calculate G_eq(s)
               </button>
+            </div>
+          )}
+
+          {/* State-Space Tab */}
+          {activeTab === "statespace" && (
+            <div className="flex-1 overflow-hidden">
+              <StateSpacePanel />
             </div>
           )}
 
@@ -400,31 +532,95 @@ export default function Index() {
 
         {/* Main canvas + result */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Block diagram visualization */}
-          <div className="panel-section m-4 mb-2 flex-shrink-0">
-            <div className="px-4 py-2 border-b border-border flex items-center gap-2">
-              <div className="w-1.5 h-1.5 rounded-full bg-signal" />
-              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                Block Diagram Preview
-              </span>
+          {/* Block diagram preview (only for builder tab) */}
+          {activeTab === "builder" && (
+            <div className="panel-section m-4 mb-2 flex-shrink-0">
+              <div className="px-4 py-2 border-b border-border flex items-center gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-signal" />
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  Block Diagram Preview
+                </span>
+              </div>
+              <div className="p-4 overflow-x-auto">
+                <BlockDiagram
+                  connectionType={connectionType}
+                  blocks={diagramBlocks}
+                  feedbackBlock={diagramFeedback}
+                />
+              </div>
             </div>
-            <div className="p-4 overflow-x-auto">
-              <BlockDiagram
-                connectionType={connectionType}
-                blocks={
-                  needsFeedback || connectionType === "unity_feedback"
-                    ? [blocks[0]]
-                    : blocks
-                }
-                feedbackBlock={needsFeedback ? feedbackBlock : undefined}
-              />
-            </div>
-          </div>
+          )}
 
-          {/* Result */}
-          <div className="flex-1 overflow-y-auto px-4 pb-4">
-            <ResultPanel result={result} error={error} />
-          </div>
+          {/* State-space diagram placeholder */}
+          {activeTab === "statespace" && (
+            <div className="panel-section m-4 mb-2 flex-shrink-0">
+              <div className="px-4 py-2 border-b border-border flex items-center gap-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-accent" />
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  State-Space Representation
+                </span>
+              </div>
+              <div className="p-4">
+                <svg width="500" height="80" className="mx-auto overflow-visible" viewBox="0 0 500 80">
+                  {/* u(t) → B → Σ → integrate → x(t) → C → y(t) */}
+                  <text x="10" y="42" fill="hsl(174,80%,55%)" fontSize={11} fontFamily="monospace">u(t)</text>
+                  <line x1="40" y1="38" x2="70" y2="38" stroke="hsl(174,80%,55%)" strokeWidth={1.5} />
+                  <rect x="70" y="24" width="40" height="28" rx={4} fill="hsl(220,18%,13%)" stroke="hsl(174,60%,35%)" strokeWidth={1.5} />
+                  <text x="90" y="42" textAnchor="middle" fill="hsl(174,80%,45%)" fontSize={10} fontFamily="monospace">B</text>
+                  <line x1="110" y1="38" x2="135" y2="38" stroke="hsl(174,80%,55%)" strokeWidth={1.5} />
+                  <circle cx="147" cy="38" r="12" fill="hsl(220,18%,16%)" stroke="hsl(174,80%,55%)" strokeWidth={1.5} />
+                  <text x="147" y="43" textAnchor="middle" fill="hsl(174,80%,55%)" fontSize={11} fontFamily="monospace">Σ</text>
+                  <line x1="159" y1="38" x2="185" y2="38" stroke="hsl(174,80%,55%)" strokeWidth={1.5} />
+                  <rect x="185" y="24" width="50" height="28" rx={4} fill="hsl(220,18%,13%)" stroke="hsl(174,60%,35%)" strokeWidth={1.5} />
+                  <text x="210" y="42" textAnchor="middle" fill="hsl(174,80%,45%)" fontSize={10} fontFamily="monospace">∫ dt</text>
+                  <line x1="235" y1="38" x2="275" y2="38" stroke="hsl(174,80%,55%)" strokeWidth={1.5} />
+                  <text x="255" y="30" fill="hsl(174,80%,55%)" fontSize={9} fontFamily="monospace">x(t)</text>
+                  <circle cx="275" cy="38" r="3" fill="hsl(174,80%,55%)" />
+                  <rect x="285" y="24" width="40" height="28" rx={4} fill="hsl(220,18%,13%)" stroke="hsl(174,60%,35%)" strokeWidth={1.5} />
+                  <text x="305" y="42" textAnchor="middle" fill="hsl(174,80%,45%)" fontSize={10} fontFamily="monospace">C</text>
+                  <line x1="325" y1="38" x2="370" y2="38" stroke="hsl(174,80%,55%)" strokeWidth={1.5} />
+                  <circle cx="370" cy="38" r="12" fill="hsl(220,18%,16%)" stroke="hsl(174,80%,55%)" strokeWidth={1.5} />
+                  <text x="370" y="43" textAnchor="middle" fill="hsl(174,80%,55%)" fontSize={11} fontFamily="monospace">Σ</text>
+                  <line x1="382" y1="38" x2="420" y2="38" stroke="hsl(174,80%,55%)" strokeWidth={1.5} />
+                  <polygon points="416,34 424,38 416,42" fill="hsl(174,80%,55%)" />
+                  <text x="430" y="42" fill="hsl(174,80%,55%)" fontSize={11} fontFamily="monospace">y(t)</text>
+                  {/* D feedthrough */}
+                  <line x1="40" y1="38" x2="40" y2="70" stroke="hsl(196,85%,50%)" strokeWidth={1} strokeDasharray="3 2" />
+                  <line x1="40" y1="70" x2="370" y2="70" stroke="hsl(196,85%,50%)" strokeWidth={1} strokeDasharray="3 2" />
+                  <rect x="178" y="60" width="30" height="18" rx={3} fill="hsl(220,18%,13%)" stroke="hsl(196,60%,35%)" strokeWidth={1} />
+                  <text x="193" y="73" textAnchor="middle" fill="hsl(196,85%,50%)" fontSize={9} fontFamily="monospace">D</text>
+                  <line x1="370" y1="70" x2="370" y2="50" stroke="hsl(196,85%,50%)" strokeWidth={1} strokeDasharray="3 2" />
+                  {/* A feedback */}
+                  <line x1="275" y1="38" x2="275" y2="10" stroke="hsl(215,15%,55%)" strokeWidth={1} strokeDasharray="3 2" />
+                  <line x1="147" y1="10" x2="275" y2="10" stroke="hsl(215,15%,55%)" strokeWidth={1} strokeDasharray="3 2" />
+                  <rect x="178" y="3" width="30" height="14" rx={3} fill="hsl(220,18%,13%)" stroke="hsl(215,25%,30%)" strokeWidth={1} />
+                  <text x="193" y="14" textAnchor="middle" fill="hsl(215,15%,55%)" fontSize={9} fontFamily="monospace">A</text>
+                  <line x1="147" y1="10" x2="147" y2="26" stroke="hsl(215,15%,55%)" strokeWidth={1} strokeDasharray="3 2" />
+                </svg>
+              </div>
+            </div>
+          )}
+
+          {/* Result panel (builder only) */}
+          {activeTab === "builder" && (
+            <div className="flex-1 overflow-y-auto px-4 pb-4">
+              <ResultPanel result={result} error={error} />
+            </div>
+          )}
+
+          {/* Library full-width info */}
+          {activeTab === "library" && (
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="panel-section p-6 text-center">
+                <div className="text-3xl mb-3">📚</div>
+                <h3 className="text-sm font-bold text-foreground mb-2">Sanity Check Library</h3>
+                <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                  Browse verified block diagram identities in the left panel. Each identity includes a formal derivation,
+                  notes on poles/zeros, and textbook references (Nise, Ogata, Franklin).
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
