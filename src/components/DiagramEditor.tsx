@@ -51,32 +51,60 @@ function BlockNode({
   onMouseDown: (e: React.MouseEvent) => void;
   onEditTF: (id: string) => void;
 }) {
+  const isFeedback = /^H/i.test(node.label);
+  const strokeColor = selected
+    ? "hsl(196,85%,50%)"
+    : isFeedback ? "hsl(45,80%,55%)" : "hsl(174,60%,35%)";
+  const accentColor = isFeedback ? "hsl(45,80%,55%)" : "hsl(174,80%,45%)";
+  const labelColor = isFeedback ? "hsl(45,60%,50%)" : "hsl(215,15%,55%)";
+
   return (
-    <g onMouseDown={onMouseDown} style={{ cursor: "grab" }}>
+    <g onMouseDown={onMouseDown} onDoubleClick={(e) => { e.stopPropagation(); onEditTF(node.id); }} style={{ cursor: "grab" }}>
       <rect
         x={node.x} y={node.y}
         width={BLOCK_W} height={BLOCK_H}
         rx={6}
         fill="hsl(220,18%,13%)"
-        stroke={selected ? "hsl(196,85%,50%)" : "hsl(174,60%,35%)"}
+        stroke={strokeColor}
         strokeWidth={selected ? 2.5 : 1.5}
         className="transition-all"
       />
+      {/* Role badge */}
+      <rect x={node.x + 3} y={node.y + 3} width={18} height={11} rx={3}
+        fill={accentColor} opacity={0.25} />
+      <text x={node.x + 12} y={node.y + 11}
+        textAnchor="middle" fill={accentColor}
+        fontSize={7} fontFamily="monospace" fontWeight="700"
+      >
+        {isFeedback ? "H" : "G"}
+      </text>
+
       <text
         x={node.x + BLOCK_W / 2} y={node.y + 17}
-        textAnchor="middle" fill="hsl(215,15%,55%)"
+        textAnchor="middle" fill={labelColor}
         fontSize={10} fontFamily="monospace"
       >
-        {node.label}
+        {node.label}(s)
       </text>
       {node.tf && (
-        <text
-          x={node.x + BLOCK_W / 2} y={node.y + 34}
-          textAnchor="middle" fill="hsl(174,80%,45%)"
-          fontSize={9} fontFamily="monospace" fontWeight="500"
-        >
-          {node.tf.num}/{node.tf.den}
-        </text>
+        <>
+          <text
+            x={node.x + BLOCK_W / 2} y={node.y + 30}
+            textAnchor="middle" fill={accentColor}
+            fontSize={9} fontFamily="monospace" fontWeight="500"
+          >
+            {node.tf.num}
+          </text>
+          <line x1={node.x + 15} y1={node.y + 33} x2={node.x + BLOCK_W - 15} y2={node.y + 33}
+            stroke={accentColor} strokeWidth={0.8} opacity={0.6} />
+          <text
+            x={node.x + BLOCK_W / 2} y={node.y + 43}
+            textAnchor="middle" fill={accentColor}
+            fontSize={9} fontFamily="monospace" fontWeight="500"
+          >
+            {node.tf.den}
+          </text>
+        </>
       )}
       {/* Edit icon */}
       <g
@@ -86,11 +114,11 @@ function BlockNode({
         <rect
           x={node.x + BLOCK_W - 18} y={node.y + 2}
           width={14} height={14} rx={3}
-          fill="hsl(174,80%,45%)" opacity={0.2}
+          fill={accentColor} opacity={0.2}
         />
         <text
           x={node.x + BLOCK_W - 11} y={node.y + 12}
-          textAnchor="middle" fill="hsl(174,80%,55%)"
+          textAnchor="middle" fill={accentColor}
           fontSize={8}
         >
           ✎
@@ -98,10 +126,10 @@ function BlockNode({
       </g>
       {/* Input port */}
       <circle cx={node.x} cy={node.y + BLOCK_H / 2} r={PORT_R}
-        fill="hsl(220,18%,16%)" stroke="hsl(174,80%,55%)" strokeWidth={1.5} />
+        fill="hsl(220,18%,16%)" stroke={accentColor} strokeWidth={1.5} />
       {/* Output port */}
       <circle cx={node.x + BLOCK_W} cy={node.y + BLOCK_H / 2} r={PORT_R}
-        fill="hsl(220,18%,16%)" stroke="hsl(174,80%,55%)" strokeWidth={1.5} />
+        fill="hsl(220,18%,16%)" stroke={accentColor} strokeWidth={1.5} />
     </g>
   );
 }
@@ -266,21 +294,63 @@ function EdgeLine({
 
 // ─── TF Edit Modal ───────────────────────────────────────────────────────────
 
+type BlockRole = "forward" | "feedback";
+
 function TFEditModal({
   node, onSave, onCancel,
 }: {
   node: DiagramNode;
-  onSave: (id: string, label: string, num: string, den: string) => void;
+  onSave: (id: string, label: string, num: string, den: string, role: BlockRole) => void;
   onCancel: () => void;
 }) {
+  const inferRole = (n: DiagramNode): BlockRole =>
+    /^H/i.test(n.label) ? "feedback" : "forward";
+
   const [label, setLabel] = useState(node.label);
   const [num, setNum] = useState(node.tf?.num ?? "1");
   const [den, setDen] = useState(node.tf?.den ?? "1");
+  const [role, setRole] = useState<BlockRole>(inferRole(node));
+
+  const handleRoleChange = (r: BlockRole) => {
+    setRole(r);
+    if (r === "forward" && /^H/i.test(label)) {
+      setLabel(label.replace(/^H/i, "G"));
+    } else if (r === "feedback" && /^G/i.test(label)) {
+      setLabel(label.replace(/^G/i, "H"));
+    }
+  };
 
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
-      <div className="panel-section p-4 w-72 space-y-3">
-        <h3 className="text-xs font-bold text-foreground uppercase tracking-wider">Edit Block</h3>
+      <div className="panel-section p-4 w-80 space-y-3">
+        <h3 className="text-xs font-bold text-foreground uppercase tracking-wider">Edit Transfer Function</h3>
+
+        {/* Role selector */}
+        <div>
+          <label className="text-[10px] text-muted-foreground uppercase tracking-wider block mb-1">Block Role</label>
+          <div className="flex gap-1.5">
+            {([
+              { value: "forward" as const, label: "G(s) Forward", color: "primary" },
+              { value: "feedback" as const, label: "H(s) Feedback", color: "accent" },
+            ]).map(opt => (
+              <button
+                key={opt.value}
+                onClick={() => handleRoleChange(opt.value)}
+                className={cn(
+                  "flex-1 py-1.5 rounded text-[10px] font-mono font-semibold border transition-all",
+                  role === opt.value
+                    ? opt.value === "forward"
+                      ? "bg-primary/20 border-primary/50 text-primary"
+                      : "bg-accent/20 border-accent/50 text-accent"
+                    : "border-border text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div>
           <label className="text-[10px] text-muted-foreground uppercase tracking-wider block mb-0.5">Label</label>
           <input
@@ -288,26 +358,33 @@ function TFEditModal({
             className="w-full bg-secondary/70 border border-border rounded px-2 py-1 text-xs font-mono text-foreground focus:outline-none focus:border-primary"
           />
         </div>
-        <div>
-          <label className="text-[10px] text-muted-foreground uppercase tracking-wider block mb-0.5">Numerator N(s)</label>
-          <input
-            value={num} onChange={e => setNum(e.target.value)}
-            placeholder="e.g. 1, s+1, 2s^2+3s+1"
-            className="w-full bg-secondary/70 border border-border rounded px-2 py-1 text-xs font-mono text-foreground focus:outline-none focus:border-primary"
-          />
+
+        {/* TF fraction display */}
+        <div className="bg-secondary/40 border border-border rounded-md p-3 space-y-1">
+          <label className="text-[10px] text-muted-foreground uppercase tracking-wider block mb-1">
+            Transfer Function {role === "forward" ? "G" : "H"}(s)
+          </label>
+          <div className="flex flex-col items-center gap-0.5">
+            <input
+              value={num} onChange={e => setNum(e.target.value)}
+              placeholder="e.g. 1, s+1, 2s^2+3s+1"
+              className="w-full bg-background border border-border rounded px-2 py-1.5 text-xs font-mono text-center text-foreground focus:outline-none focus:border-primary"
+            />
+            <div className="w-4/5 h-px bg-primary/60 my-0.5" />
+            <input
+              value={den} onChange={e => setDen(e.target.value)}
+              placeholder="e.g. s, s+2, s^2+3s+2"
+              className="w-full bg-background border border-border rounded px-2 py-1.5 text-xs font-mono text-center text-foreground focus:outline-none focus:border-primary"
+            />
+          </div>
+          <p className="text-[9px] text-muted-foreground text-center mt-1 font-mono">
+            {label}(s) = ({num || "?"}) / ({den || "?"})
+          </p>
         </div>
-        <div className="h-px bg-primary/30 mx-1" />
-        <div>
-          <label className="text-[10px] text-muted-foreground uppercase tracking-wider block mb-0.5">Denominator D(s)</label>
-          <input
-            value={den} onChange={e => setDen(e.target.value)}
-            placeholder="e.g. s, s+2, s^2+3s+2"
-            className="w-full bg-secondary/70 border border-border rounded px-2 py-1 text-xs font-mono text-foreground focus:outline-none focus:border-primary"
-          />
-        </div>
+
         <div className="flex gap-2">
           <button
-            onClick={() => onSave(node.id, label, num, den)}
+            onClick={() => onSave(node.id, label, num, den, role)}
             className="btn-glow flex-1 py-1.5 rounded text-xs font-bold"
           >
             Save
@@ -484,7 +561,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     }
   }, [diagram, onAnalyze]);
 
-  const handleSaveTF = useCallback((id: string, label: string, num: string, den: string) => {
+  const handleSaveTF = useCallback((id: string, label: string, num: string, den: string, _role: string) => {
     updateNode(id, { label, tf: { num, den } });
     setEditingNodeId(null);
   }, [updateNode]);
