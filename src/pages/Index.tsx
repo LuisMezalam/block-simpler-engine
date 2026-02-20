@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from "react";
 import { solve, SolverResult, ConnectionType, stabilityLabel } from "@/lib/solver";
 import { BlockDiagram } from "@/components/BlockDiagram";
+import { DiagramEditor } from "@/components/DiagramEditor";
 import { SanityLibrary } from "@/components/SanityLibrary";
 import { StateSpacePanel } from "@/components/StateSpacePanel";
 import { cn } from "@/lib/utils";
@@ -532,22 +533,29 @@ export default function Index() {
 
         {/* Main canvas + result */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Block diagram preview (only for builder tab) */}
+          {/* Interactive Block Diagram Editor (builder tab) */}
           {activeTab === "builder" && (
-            <div className="panel-section m-4 mb-2 flex-shrink-0">
+            <div className="panel-section m-4 mb-2 flex-1 min-h-[400px] flex flex-col overflow-hidden">
               <div className="px-4 py-2 border-b border-border flex items-center gap-2">
                 <div className="w-1.5 h-1.5 rounded-full bg-signal" />
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                  Block Diagram Preview
+                  Block Diagram Editor
+                </span>
+                <span className="text-[9px] font-mono text-muted-foreground/60 ml-auto">
+                  Drag to move · ⤳ to connect · Click ✎ to edit G(s)
                 </span>
               </div>
-              <div className="p-4 overflow-x-auto">
-                <BlockDiagram
-                  connectionType={connectionType}
-                  blocks={diagramBlocks}
-                  feedbackBlock={diagramFeedback}
-                />
-              </div>
+              <DiagramEditor
+                onAnalyze={(res, err) => {
+                  if (res) {
+                    setResult(res);
+                    setError("");
+                  } else {
+                    setResult(null);
+                    setError(err);
+                  }
+                }}
+              />
             </div>
           )}
 
@@ -603,7 +611,7 @@ export default function Index() {
 
           {/* Result panel (builder only) */}
           {activeTab === "builder" && (
-            <div className="flex-1 overflow-y-auto px-4 pb-4">
+            <div className="overflow-y-auto px-4 pb-4 max-h-[50vh]">
               <ResultPanel result={result} error={error} />
             </div>
           )}
