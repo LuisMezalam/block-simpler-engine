@@ -4,6 +4,7 @@ import { BlockDiagram } from "@/components/BlockDiagram";
 import { DiagramEditor } from "@/components/DiagramEditor";
 import { SanityLibrary } from "@/components/SanityLibrary";
 import { StateSpacePanel } from "@/components/StateSpacePanel";
+import { AnalysisPlots } from "@/components/AnalysisPlots";
 import { cn } from "@/lib/utils";
 
 type ConnectionMode = ConnectionType;
@@ -611,8 +612,9 @@ export default function Index() {
 
           {/* Result panel (builder only) */}
           {activeTab === "builder" && (
-            <div className="overflow-y-auto px-4 pb-4 max-h-[50vh]">
+            <div className="overflow-y-auto px-4 pb-4 max-h-[50vh] space-y-3">
               <ResultPanel result={result} error={error} />
+              {result && <AnalysisPlots result={result} />}
             </div>
           )}
 

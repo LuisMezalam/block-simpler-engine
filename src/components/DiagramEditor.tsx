@@ -19,6 +19,43 @@ function snap(v: number): number {
   return Math.round(v / GRID_SNAP) * GRID_SNAP;
 }
 
+// ─── Undo/Redo Hook ──────────────────────────────────────────────────────────
+
+function useHistory(initial: DiagramState) {
+  const [history, setHistory] = useState<DiagramState[]>([initial]);
+  const [index, setIndex] = useState(0);
+
+  const current = history[index];
+
+  const push = useCallback((state: DiagramState) => {
+    setHistory(prev => {
+      const next = prev.slice(0, index + 1);
+      next.push(state);
+      if (next.length > 50) next.shift(); // cap
+      return next;
+    });
+    setIndex(prev => Math.min(prev + 1, 50));
+  }, [index]);
+
+  const undo = useCallback(() => {
+    setIndex(prev => Math.max(0, prev - 1));
+  }, []);
+
+  const redo = useCallback(() => {
+    setIndex(prev => Math.min(prev + 1, history.length - 1));
+  }, [history.length]);
+
+  const reset = useCallback((state: DiagramState) => {
+    setHistory([state]);
+    setIndex(0);
+  }, []);
+
+  const canUndo = index > 0;
+  const canRedo = index < history.length - 1;
+
+  return { current, push, undo, redo, reset, canUndo, canRedo };
+}
+
 // ─── Port positions ──────────────────────────────────────────────────────────
 
 function getInputPort(node: DiagramNode): { x: number; y: number } {
@@ -156,7 +193,6 @@ function SummingNode({
       >
         ⊕
       </text>
-      {/* Show signs */}
       {node.signs && Object.entries(node.signs).map(([, sign], i) => (
         <text
           key={i}
@@ -204,23 +240,19 @@ function IONode({
   return (
     <g onMouseDown={onMouseDown} style={{ cursor: "grab" }}>
       {isInput ? (
-        <>
-          <polygon
-            points={`${node.x},${node.y - 10} ${node.x + 20},${node.y} ${node.x},${node.y + 10}`}
-            fill="hsl(220,18%,16%)"
-            stroke={selected ? "hsl(196,85%,50%)" : "hsl(174,80%,55%)"}
-            strokeWidth={1.5}
-          />
-        </>
+        <polygon
+          points={`${node.x},${node.y - 10} ${node.x + 20},${node.y} ${node.x},${node.y + 10}`}
+          fill="hsl(220,18%,16%)"
+          stroke={selected ? "hsl(196,85%,50%)" : "hsl(174,80%,55%)"}
+          strokeWidth={1.5}
+        />
       ) : (
-        <>
-          <polygon
-            points={`${node.x - 20},${node.y - 10} ${node.x},${node.y} ${node.x - 20},${node.y + 10}`}
-            fill="hsl(220,18%,16%)"
-            stroke={selected ? "hsl(196,85%,50%)" : "hsl(174,80%,55%)"}
-            strokeWidth={1.5}
-          />
-        </>
+        <polygon
+          points={`${node.x - 20},${node.y - 10} ${node.x},${node.y} ${node.x - 20},${node.y + 10}`}
+          fill="hsl(220,18%,16%)"
+          stroke={selected ? "hsl(196,85%,50%)" : "hsl(174,80%,55%)"}
+          strokeWidth={1.5}
+        />
       )}
       <text
         x={isInput ? node.x - 8 : node.x + 8}
@@ -249,24 +281,19 @@ function EdgeLine({
   const from = getOutputPort(fromNode);
   const to = getInputPort(toNode);
 
-  // Calculate path with right-angle routing
   const dx = to.x - from.x;
   const dy = to.y - from.y;
   let path: string;
 
   if (Math.abs(dy) < 5) {
-    // Straight horizontal
     path = `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
   } else if (Math.abs(dx) < 5) {
-    // Straight vertical
     path = `M ${from.x} ${from.y} L ${to.x} ${to.y}`;
   } else {
-    // L-shaped or Z-shaped routing
     const midX = from.x + dx / 2;
     path = `M ${from.x} ${from.y} L ${midX} ${from.y} L ${midX} ${to.y} L ${to.x} ${to.y}`;
   }
 
-  // Arrowhead
   const angle = Math.atan2(to.y - from.y, to.x - from.x);
   const arrowLen = 8;
   const ax1 = to.x - arrowLen * Math.cos(angle - 0.4);
@@ -276,7 +303,6 @@ function EdgeLine({
 
   return (
     <g onClick={onClick} style={{ cursor: "pointer" }}>
-      {/* Hit area */}
       <path d={path} fill="none" stroke="transparent" strokeWidth={12} />
       <path
         d={path}
@@ -325,13 +351,12 @@ function TFEditModal({
       <div className="panel-section p-4 w-80 space-y-3">
         <h3 className="text-xs font-bold text-foreground uppercase tracking-wider">Edit Transfer Function</h3>
 
-        {/* Role selector */}
         <div>
           <label className="text-[10px] text-muted-foreground uppercase tracking-wider block mb-1">Block Role</label>
           <div className="flex gap-1.5">
             {([
-              { value: "forward" as const, label: "G(s) Forward", color: "primary" },
-              { value: "feedback" as const, label: "H(s) Feedback", color: "accent" },
+              { value: "forward" as const, label: "G(s) Forward" },
+              { value: "feedback" as const, label: "H(s) Feedback" },
             ]).map(opt => (
               <button
                 key={opt.value}
@@ -359,7 +384,6 @@ function TFEditModal({
           />
         </div>
 
-        {/* TF fraction display */}
         <div className="bg-secondary/40 border border-border rounded-md p-3 space-y-1">
           <label className="text-[10px] text-muted-foreground uppercase tracking-wider block mb-1">
             Transfer Function {role === "forward" ? "G" : "H"}(s)
@@ -424,22 +448,45 @@ interface DiagramEditorProps {
 }
 
 export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
-  const [diagram, setDiagram] = useState<DiagramState>(createSeriesTemplate);
+  const {
+    current: diagram, push: pushDiagram,
+    undo, redo, reset: resetDiagram,
+    canUndo, canRedo,
+  } = useHistory(createSeriesTemplate());
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [connecting, setConnecting] = useState<{ fromId: string } | null>(null);
   const [tool, setTool] = useState<"select" | "connect" | "delete">("select");
 
+  // Zoom/Pan state
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const isPanning = useRef(false);
+  const panStart = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+
   const svgRef = useRef<SVGSVGElement>(null);
   const draggingRef = useRef<{ nodeId: string; offsetX: number; offsetY: number } | null>(null);
+
+  // Helper to commit diagram changes with undo support
+  const setDiagram = useCallback((updater: (prev: DiagramState) => DiagramState) => {
+    pushDiagram(updater(diagram));
+  }, [diagram, pushDiagram]);
 
   // ─── Handlers ────────────────────────────────────────────────────
 
   const updateNode = useCallback((id: string, updates: Partial<DiagramNode>) => {
-    setDiagram(prev => ({
-      ...prev,
-      nodes: prev.nodes.map(n => n.id === id ? { ...n, ...updates } : n),
-    }));
+    // For dragging we update without pushing to history (push on mouseup)
+    pushDiagram({
+      ...diagram,
+      nodes: diagram.nodes.map(n => n.id === id ? { ...n, ...updates } : n),
+    });
+  }, [diagram, pushDiagram]);
+
+  // Lightweight update for dragging (no history push)
+  const updateNodeDrag = useCallback((id: string, x: number, y: number) => {
+    // Directly mutate the history's current entry for smooth dragging
+    // We'll push a final state on mouseup
   }, []);
 
   const addNode = useCallback((type: NodeType) => {
@@ -454,35 +501,49 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
       ...(type === "block" ? { tf: { num: "1", den: "s + 1" } } : {}),
       ...(type === "summing" ? { signs: {} } : {}),
     };
-    setDiagram(prev => ({ ...prev, nodes: [...prev.nodes, newNode] }));
+    pushDiagram({ ...diagram, nodes: [...diagram.nodes, newNode] });
     setSelectedId(id);
-  }, [diagram.nodes]);
+  }, [diagram, pushDiagram]);
 
   const deleteSelected = useCallback(() => {
     if (!selectedId) return;
-    // Check if it's an edge
     const isEdge = diagram.edges.some(e => e.id === selectedId);
     if (isEdge) {
-      setDiagram(prev => ({
-        ...prev,
-        edges: prev.edges.filter(e => e.id !== selectedId),
-      }));
+      pushDiagram({
+        ...diagram,
+        edges: diagram.edges.filter(e => e.id !== selectedId),
+      });
     } else {
-      // Delete node and connected edges
-      setDiagram(prev => ({
-        ...prev,
-        nodes: prev.nodes.filter(n => n.id !== selectedId),
-        edges: prev.edges.filter(e => e.from !== selectedId && e.to !== selectedId),
-      }));
+      pushDiagram({
+        ...diagram,
+        nodes: diagram.nodes.filter(n => n.id !== selectedId),
+        edges: diagram.edges.filter(e => e.from !== selectedId && e.to !== selectedId),
+      });
     }
     setSelectedId(null);
-  }, [selectedId, diagram.edges]);
+  }, [selectedId, diagram, pushDiagram]);
+
+  const getSvgPoint = useCallback((clientX: number, clientY: number) => {
+    if (!svgRef.current) return { x: 0, y: 0 };
+    const rect = svgRef.current.getBoundingClientRect();
+    return {
+      x: (clientX - rect.left - pan.x) / zoom,
+      y: (clientY - rect.top - pan.y) / zoom,
+    };
+  }, [zoom, pan]);
 
   const handleSvgMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.target === svgRef.current) {
+    if (e.target === svgRef.current || (e.target as Element).tagName === "rect" && (e.target as Element).getAttribute("fill") === "url(#grid)") {
+      if (e.button === 1 || (e.button === 0 && e.altKey)) {
+        // Middle click or Alt+click to pan
+        isPanning.current = true;
+        panStart.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
+        e.preventDefault();
+        return;
+      }
       setSelectedId(null);
     }
-  }, []);
+  }, [pan]);
 
   const handleNodeMouseDown = useCallback((nodeId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -491,13 +552,12 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
       if (!connecting) {
         setConnecting({ fromId: nodeId });
       } else {
-        // Complete connection
         if (connecting.fromId !== nodeId) {
           const edgeId = genId("e");
-          setDiagram(prev => ({
-            ...prev,
-            edges: [...prev.edges, { id: edgeId, from: connecting.fromId, to: nodeId }],
-          }));
+          pushDiagram({
+            ...diagram,
+            edges: [...diagram.edges, { id: edgeId, from: connecting.fromId, to: nodeId }],
+          });
         }
         setConnecting(null);
       }
@@ -505,22 +565,17 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     }
 
     if (tool === "delete") {
-      setSelectedId(nodeId);
-      // Defer delete
-      setDiagram(prev => ({
-        ...prev,
-        nodes: prev.nodes.filter(n => n.id !== nodeId),
-        edges: prev.edges.filter(e => e.from !== nodeId && e.to !== nodeId),
-      }));
+      pushDiagram({
+        ...diagram,
+        nodes: diagram.nodes.filter(n => n.id !== nodeId),
+        edges: diagram.edges.filter(e => e.from !== nodeId && e.to !== nodeId),
+      });
       return;
     }
 
     setSelectedId(nodeId);
 
-    if (!svgRef.current) return;
-    const rect = svgRef.current.getBoundingClientRect();
-    const svgX = (e.clientX - rect.left);
-    const svgY = (e.clientY - rect.top);
+    const { x: svgX, y: svgY } = getSvgPoint(e.clientX, e.clientY);
     const node = diagram.nodes.find(n => n.id === nodeId);
     if (!node) return;
 
@@ -529,18 +584,26 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
       offsetX: svgX - node.x,
       offsetY: svgY - node.y,
     };
-  }, [tool, connecting, diagram.nodes]);
+  }, [tool, connecting, diagram, pushDiagram, getSvgPoint]);
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
+      if (isPanning.current) {
+        setPan({
+          x: panStart.current.panX + (e.clientX - panStart.current.x),
+          y: panStart.current.panY + (e.clientY - panStart.current.y),
+        });
+        return;
+      }
       if (!draggingRef.current || !svgRef.current) return;
-      const rect = svgRef.current.getBoundingClientRect();
-      const x = snap(e.clientX - rect.left - draggingRef.current.offsetX);
-      const y = snap(e.clientY - rect.top - draggingRef.current.offsetY);
-      updateNode(draggingRef.current.nodeId, { x, y });
+      const { x, y } = getSvgPoint(e.clientX, e.clientY);
+      const nx = snap(x - draggingRef.current.offsetX);
+      const ny = snap(y - draggingRef.current.offsetY);
+      updateNode(draggingRef.current.nodeId, { x: nx, y: ny });
     };
 
     const handleMouseUp = () => {
+      isPanning.current = false;
       draggingRef.current = null;
     };
 
@@ -550,7 +613,20 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [updateNode]);
+  }, [updateNode, getSvgPoint]);
+
+  // Wheel zoom
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      setZoom(prev => Math.max(0.3, Math.min(3, prev * delta)));
+    };
+    svg.addEventListener("wheel", handleWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", handleWheel);
+  }, []);
 
   const handleAnalyze = useCallback(() => {
     const result = analyzeDiagram(diagram);
@@ -562,21 +638,26 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
   }, [diagram, onAnalyze]);
 
   const handleSaveTF = useCallback((id: string, label: string, num: string, den: string, _role: string) => {
-    updateNode(id, { label, tf: { num, den } });
+    pushDiagram({
+      ...diagram,
+      nodes: diagram.nodes.map(n => n.id === id ? { ...n, label, tf: { num, den } } : n),
+    });
     setEditingNodeId(null);
-  }, [updateNode]);
+  }, [diagram, pushDiagram]);
 
   const loadTemplate = useCallback((create: () => DiagramState) => {
-    setDiagram(create());
+    resetDiagram(create());
     setSelectedId(null);
     setConnecting(null);
-  }, []);
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }, [resetDiagram]);
 
   // ─── Keyboard ────────────────────────────────────────────────────
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (editingNodeId) return; // Don't capture when editing
+      if (editingNodeId) return;
       if (e.key === "Delete" || e.key === "Backspace") {
         deleteSelected();
       }
@@ -585,17 +666,56 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         setConnecting(null);
         setTool("select");
       }
+      // Undo/Redo
+      if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      }
+      if ((e.metaKey || e.ctrlKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
+        e.preventDefault();
+        redo();
+      }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [deleteSelected, editingNodeId]);
+  }, [deleteSelected, editingNodeId, undo, redo]);
 
   const editingNode = editingNodeId ? diagram.nodes.find(n => n.id === editingNodeId) : null;
+
+  const viewBox = `${-pan.x / zoom} ${-pan.y / zoom} ${600 / zoom} ${350 / zoom}`;
 
   return (
     <div className="relative flex flex-col h-full">
       {/* Toolbar */}
       <div className="flex items-center gap-1 px-3 py-2 border-b border-border flex-wrap">
+        {/* Undo/Redo */}
+        <div className="flex items-center gap-0.5 mr-1">
+          <button
+            onClick={undo}
+            disabled={!canUndo}
+            title="Undo (Ctrl+Z)"
+            className={cn(
+              "px-1.5 py-1 text-xs font-mono rounded transition-all",
+              canUndo ? "text-muted-foreground hover:text-foreground hover:bg-secondary" : "text-muted-foreground/30"
+            )}
+          >
+            ↶
+          </button>
+          <button
+            onClick={redo}
+            disabled={!canRedo}
+            title="Redo (Ctrl+Y)"
+            className={cn(
+              "px-1.5 py-1 text-xs font-mono rounded transition-all",
+              canRedo ? "text-muted-foreground hover:text-foreground hover:bg-secondary" : "text-muted-foreground/30"
+            )}
+          >
+            ↷
+          </button>
+        </div>
+
+        <div className="w-px h-5 bg-border mx-0.5" />
+
         {/* Mode tools */}
         <div className="flex items-center gap-0.5 mr-2">
           {([
@@ -648,6 +768,32 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
 
         <div className="flex-1" />
 
+        {/* Zoom controls */}
+        <div className="flex items-center gap-1 mr-2">
+          <button
+            onClick={() => setZoom(z => Math.max(0.3, z - 0.15))}
+            className="px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground hover:text-foreground rounded hover:bg-secondary"
+          >
+            −
+          </button>
+          <span className="text-[9px] font-mono text-muted-foreground w-8 text-center">
+            {Math.round(zoom * 100)}%
+          </span>
+          <button
+            onClick={() => setZoom(z => Math.min(3, z + 0.15))}
+            className="px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground hover:text-foreground rounded hover:bg-secondary"
+          >
+            +
+          </button>
+          <button
+            onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}
+            className="px-1.5 py-0.5 text-[9px] font-mono text-muted-foreground hover:text-foreground rounded hover:bg-secondary"
+            title="Reset view"
+          >
+            ⊡
+          </button>
+        </div>
+
         {/* Delete selected */}
         {selectedId && (
           <button
@@ -675,15 +821,15 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
       )}
 
       {/* SVG Canvas */}
-      <div className="flex-1 overflow-auto bg-background/50 relative">
+      <div className="flex-1 overflow-hidden bg-background/50 relative">
         <svg
           ref={svgRef}
           width="100%"
           height="100%"
-          viewBox="0 0 600 350"
+          viewBox={viewBox}
           className="min-w-[600px] min-h-[350px]"
           onMouseDown={handleSvgMouseDown}
-          style={{ cursor: tool === "connect" ? "crosshair" : tool === "delete" ? "not-allowed" : "default" }}
+          style={{ cursor: isPanning.current ? "grabbing" : tool === "connect" ? "crosshair" : tool === "delete" ? "not-allowed" : "default" }}
         >
           {/* Grid */}
           <defs>
@@ -691,7 +837,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
               <path d="M 20 0 L 0 0 0 20" fill="none" stroke="hsl(220,15%,12%)" strokeWidth={0.5} />
             </pattern>
           </defs>
-          <rect width="100%" height="100%" fill="url(#grid)" />
+          <rect x={-pan.x / zoom} y={-pan.y / zoom} width={600 / zoom} height={350 / zoom} fill="url(#grid)" />
 
           {/* Edges */}
           {diagram.edges.map(edge => (
@@ -702,10 +848,10 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
               selected={selectedId === edge.id}
               onClick={() => {
                 if (tool === "delete") {
-                  setDiagram(prev => ({
-                    ...prev,
-                    edges: prev.edges.filter(e => e.id !== edge.id),
-                  }));
+                  pushDiagram({
+                    ...diagram,
+                    edges: diagram.edges.filter(e => e.id !== edge.id),
+                  });
                 } else {
                   setSelectedId(edge.id);
                 }
@@ -752,7 +898,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         <span>{diagram.edges.length} edges</span>
         <span>{diagram.nodes.filter(n => n.type === "block").length} blocks</span>
         {selectedId && <span className="text-accent">Selected: {selectedId}</span>}
-        <span className="ml-auto">Del/Backspace to remove · Esc to deselect</span>
+        <span className="ml-auto">Ctrl+Z undo · Ctrl+Y redo · Scroll to zoom · Alt+drag to pan</span>
       </div>
     </div>
   );
