@@ -1,0 +1,260 @@
+import React, { useMemo } from "react";
+import { SolverResult } from "@/lib/solver";
+import { evaluate } from "@/lib/polynomial";
+import {
+  ResponsiveContainer, LineChart, Line, XAxis, YAxis,
+  CartesianGrid, Tooltip, ReferenceLine,
+} from "recharts";
+
+// ─── Pole-Zero Map (SVG) ─────────────────────────────────────────────────────
+
+function PoleZeroMap({ result }: { result: SolverResult }) {
+  const allPoints = [...result.poles, ...result.zeros].filter(p => !isNaN(p.re));
+  if (allPoints.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-full text-xs text-muted-foreground font-mono">
+        No computable poles/zeros (higher-order — solve characteristic eq.)
+      </div>
+    );
+  }
+
+  const margin = 1;
+  const reVals = allPoints.map(p => p.re);
+  const imVals = allPoints.map(p => p.im);
+  const maxAbs = Math.max(
+    Math.max(...reVals.map(Math.abs), ...imVals.map(Math.abs)),
+    0.5
+  ) + margin;
+
+  const W = 280, H = 280;
+  const cx = W / 2, cy = H / 2;
+  const scaleVal = (W / 2 - 30) / maxAbs;
+
+  const toSvg = (re: number, im: number) => ({
+    x: cx + re * scaleVal,
+    y: cy - im * scaleVal,
+  });
+
+  return (
+    <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} className="max-w-[280px] mx-auto">
+      {/* Axes */}
+      <line x1={0} y1={cy} x2={W} y2={cy} stroke="hsl(var(--border))" strokeWidth={1} />
+      <line x1={cx} y1={0} x2={cx} y2={H} stroke="hsl(var(--border))" strokeWidth={1} />
+      <text x={W - 8} y={cy - 4} fill="hsl(var(--muted-foreground))" fontSize={8} fontFamily="monospace">Re</text>
+      <text x={cx + 4} y={10} fill="hsl(var(--muted-foreground))" fontSize={8} fontFamily="monospace">Im</text>
+
+      {/* LHP shading */}
+      <rect x={0} y={0} width={cx} height={H} fill="hsl(var(--success) / 0.05)" />
+
+      {/* Grid ticks */}
+      {[-2, -1, 1, 2].map(v => {
+        const pos = toSvg(v * (maxAbs / 3), 0);
+        const posI = toSvg(0, v * (maxAbs / 3));
+        return (
+          <g key={v}>
+            <line x1={pos.x} y1={cy - 3} x2={pos.x} y2={cy + 3} stroke="hsl(var(--muted-foreground))" strokeWidth={0.5} />
+            <text x={pos.x} y={cy + 12} textAnchor="middle" fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">
+              {(v * maxAbs / 3).toFixed(1)}
+            </text>
+            <line x1={cx - 3} y1={posI.y} x2={cx + 3} y2={posI.y} stroke="hsl(var(--muted-foreground))" strokeWidth={0.5} />
+          </g>
+        );
+      })}
+
+      {/* Poles (×) */}
+      {result.poles.filter(p => !isNaN(p.re)).map((p, i) => {
+        const { x, y } = toSvg(p.re, p.im);
+        const color = p.re > 1e-8 ? "hsl(var(--destructive))" : "hsl(var(--primary))";
+        return (
+          <g key={`p${i}`}>
+            <line x1={x - 5} y1={y - 5} x2={x + 5} y2={y + 5} stroke={color} strokeWidth={2} />
+            <line x1={x - 5} y1={y + 5} x2={x + 5} y2={y - 5} stroke={color} strokeWidth={2} />
+          </g>
+        );
+      })}
+
+      {/* Zeros (○) */}
+      {result.zeros.filter(z => !isNaN(z.re)).map((z, i) => {
+        const { x, y } = toSvg(z.re, z.im);
+        return (
+          <circle key={`z${i}`} cx={x} cy={y} r={5}
+            fill="none" stroke="hsl(var(--accent))" strokeWidth={2} />
+        );
+      })}
+
+      {/* Legend */}
+      <g transform={`translate(8, ${H - 25})`}>
+        <line x1={0} y1={0} x2={6} y2={6} stroke="hsl(var(--primary))" strokeWidth={1.5} />
+        <line x1={6} y1={0} x2={0} y2={6} stroke="hsl(var(--primary))" strokeWidth={1.5} />
+        <text x={12} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Poles</text>
+        <circle cx={50} cy={3} r={4} fill="none" stroke="hsl(var(--accent))" strokeWidth={1.5} />
+        <text x={58} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Zeros</text>
+      </g>
+    </svg>
+  );
+}
+
+// ─── Step Response ───────────────────────────────────────────────────────────
+
+function StepResponsePlot({ result }: { result: SolverResult }) {
+  const data = useMemo(() => {
+    const { num, den } = result.equivalentTF;
+    // Approximate step response via inverse Laplace numerical integration (Euler)
+    // For G(s), step response = L^{-1}[G(s)/s]
+    // We'll use state-space simulation: convert to controllable canonical form
+    const n = den.coeffs.length - 1; // order
+    if (n === 0) {
+      // Static gain
+      const gain = num.coeffs[0] / den.coeffs[0];
+      return Array.from({ length: 100 }, (_, i) => ({ t: i * 0.1, y: gain }));
+    }
+
+    // Normalize denominator to monic
+    const an = den.coeffs[n];
+    const a = den.coeffs.map(c => c / an);
+    const b = num.coeffs.map(c => c / an);
+
+    // State vector x[0..n-1], controllable canonical form
+    // x' = A*x + B*u, y = C*x + D*u
+    const dt = 0.01;
+    const tMax = 10;
+    const steps = Math.ceil(tMax / dt);
+    const x = new Float64Array(n);
+    const points: { t: number; y: number }[] = [];
+
+    for (let k = 0; k <= steps; k++) {
+      const t = k * dt;
+      // Output: y = sum of b[i]*x[i] (simplified)
+      let y = 0;
+      for (let i = 0; i < Math.min(b.length, n); i++) {
+        y += (b[i] || 0) * x[i];
+      }
+      // Direct feedthrough
+      if (b.length > n) y += b[n];
+
+      if (k % 5 === 0) points.push({ t: parseFloat(t.toFixed(3)), y: parseFloat(y.toFixed(6)) });
+
+      // State update (controllable canonical)
+      const xn = new Float64Array(n);
+      for (let i = 0; i < n - 1; i++) xn[i] = x[i] + dt * x[i + 1];
+      // Last state derivative
+      let xdot_last = 1; // step input u=1
+      for (let i = 0; i < n; i++) xdot_last -= a[i] * x[i];
+      xn[n - 1] = x[n - 1] + dt * xdot_last;
+      x.set(xn);
+    }
+
+    return points;
+  }, [result]);
+
+  if (data.length === 0) return null;
+
+  return (
+    <ResponsiveContainer width="100%" height={200}>
+      <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+        <XAxis dataKey="t" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "t (s)", position: "insideBottomRight", offset: -5, fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
+        <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
+        <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
+        <ReferenceLine y={0} stroke="hsl(var(--border))" />
+        <Line type="monotone" dataKey="y" stroke="hsl(var(--primary))" strokeWidth={1.5} dot={false} name="y(t)" />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+// ─── Bode Magnitude Plot ─────────────────────────────────────────────────────
+
+function BodePlot({ result }: { result: SolverResult }) {
+  const data = useMemo(() => {
+    const { num, den } = result.equivalentTF;
+    const points: { w: number; wLog: number; mag: number }[] = [];
+
+    for (let exp = -2; exp <= 3; exp += 0.05) {
+      const w = Math.pow(10, exp);
+      // G(jw): evaluate num and den at s = jw
+      // num(jw) = sum c_k * (jw)^k
+      let numRe = 0, numIm = 0;
+      for (let k = 0; k < num.coeffs.length; k++) {
+        const c = num.coeffs[k];
+        const wk = Math.pow(w, k);
+        // (j)^k: 0->1, 1->j, 2->-1, 3->-j
+        switch (k % 4) {
+          case 0: numRe += c * wk; break;
+          case 1: numIm += c * wk; break;
+          case 2: numRe -= c * wk; break;
+          case 3: numIm -= c * wk; break;
+        }
+      }
+      let denRe = 0, denIm = 0;
+      for (let k = 0; k < den.coeffs.length; k++) {
+        const c = den.coeffs[k];
+        const wk = Math.pow(w, k);
+        switch (k % 4) {
+          case 0: denRe += c * wk; break;
+          case 1: denIm += c * wk; break;
+          case 2: denRe -= c * wk; break;
+          case 3: denIm -= c * wk; break;
+        }
+      }
+      const numMag = Math.sqrt(numRe * numRe + numIm * numIm);
+      const denMag = Math.sqrt(denRe * denRe + denIm * denIm);
+      const magDb = 20 * Math.log10(numMag / (denMag || 1e-30));
+
+      points.push({ w, wLog: parseFloat(exp.toFixed(2)), mag: parseFloat(magDb.toFixed(2)) });
+    }
+    return points;
+  }, [result]);
+
+  return (
+    <ResponsiveContainer width="100%" height={200}>
+      <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+        <XAxis dataKey="wLog" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "log₁₀(ω)", position: "insideBottomRight", offset: -5, fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
+        <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "dB", angle: -90, position: "insideLeft", fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
+        <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
+        <ReferenceLine y={0} stroke="hsl(var(--warning))" strokeDasharray="5 3" />
+        <Line type="monotone" dataKey="mag" stroke="hsl(var(--accent))" strokeWidth={1.5} dot={false} name="|G(jω)| dB" />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+// ─── Combined Panel ──────────────────────────────────────────────────────────
+
+type PlotTab = "pzmap" | "step" | "bode";
+
+export function AnalysisPlots({ result }: { result: SolverResult }) {
+  const [tab, setTab] = React.useState<PlotTab>("pzmap");
+
+  const tabs: { id: PlotTab; label: string }[] = [
+    { id: "pzmap", label: "Pole-Zero Map" },
+    { id: "step", label: "Step Response" },
+    { id: "bode", label: "Bode Plot" },
+  ];
+
+  return (
+    <div className="panel-section overflow-hidden">
+      <div className="flex border-b border-border">
+        {tabs.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`flex-1 py-2 text-[10px] font-semibold tracking-wide uppercase transition-all ${
+              tab === t.id
+                ? "text-primary border-b-2 border-primary bg-primary/5"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div className="p-3 min-h-[220px]">
+        {tab === "pzmap" && <PoleZeroMap result={result} />}
+        {tab === "step" && <StepResponsePlot result={result} />}
+        {tab === "bode" && <BodePlot result={result} />}
+      </div>
+    </div>
+  );
+}
