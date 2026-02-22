@@ -428,11 +428,23 @@ function TFEditModal({
 // ─── Toolbar ─────────────────────────────────────────────────────────────────
 
 const TOOLBAR_ITEMS: { type: NodeType; icon: string; label: string }[] = [
-  { type: "block",    icon: "▢", label: "G(s) Block" },
   { type: "summing",  icon: "⊕", label: "Σ Junction" },
   { type: "pickoff",  icon: "●", label: "Pick-off" },
   { type: "input",    icon: "▷", label: "Input" },
   { type: "output",   icon: "◁", label: "Output" },
+];
+
+const BLOCK_PRESETS: { label: string; icon: string; tf: { num: string; den: string }; blockLabel: string }[] = [
+  { label: "Generic G(s)",   icon: "▢", tf: { num: "1", den: "s + 1" },           blockLabel: "G" },
+  { label: "Gain K",         icon: "K", tf: { num: "K", den: "1" },               blockLabel: "K" },
+  { label: "Integrator",     icon: "∫", tf: { num: "1", den: "s" },               blockLabel: "1/s" },
+  { label: "Differentiator", icon: "d", tf: { num: "s", den: "1" },               blockLabel: "s" },
+  { label: "PID",            icon: "P", tf: { num: "Kd*s^2+Kp*s+Ki", den: "s" },  blockLabel: "PID" },
+  { label: "1st Order",      icon: "1", tf: { num: "K", den: "Ts+1" },            blockLabel: "G₁" },
+  { label: "2nd Order",      icon: "2", tf: { num: "wn^2", den: "s^2+2*z*wn*s+wn^2" }, blockLabel: "G₂" },
+  { label: "Lead Comp.",     icon: "↗", tf: { num: "s+a", den: "s+b" },           blockLabel: "Gc" },
+  { label: "Lag Comp.",      icon: "↘", tf: { num: "s+b", den: "s+a" },           blockLabel: "Gc" },
+  { label: "Delay (Padé)",   icon: "τ", tf: { num: "-s+2/T", den: "s+2/T" },     blockLabel: "e⁻ˢᵀ" },
 ];
 
 const TEMPLATES = [
@@ -458,6 +470,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [connecting, setConnecting] = useState<{ fromId: string } | null>(null);
   const [tool, setTool] = useState<"select" | "connect" | "delete">("select");
+  const [showPresets, setShowPresets] = useState(false);
 
   // Zoom/Pan state
   const [zoom, setZoom] = useState(1);
@@ -505,6 +518,73 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     setSelectedId(id);
   }, [diagram, pushDiagram]);
 
+  const addBlockPreset = useCallback((preset: typeof BLOCK_PRESETS[number]) => {
+    const blockCount = diagram.nodes.filter(n => n.type === "block").length;
+    const id = genId("b");
+    const newNode: DiagramNode = {
+      id, type: "block",
+      x: 160 + blockCount * 140, y: 130,
+      label: preset.blockLabel + (blockCount > 0 ? `${blockCount + 1}` : ""),
+      tf: { ...preset.tf },
+    };
+    pushDiagram({ ...diagram, nodes: [...diagram.nodes, newNode] });
+    setSelectedId(id);
+    setShowPresets(false);
+  }, [diagram, pushDiagram]);
+
+  /** Smart connect: when connecting block→block, auto-insert in series chain */
+  const smartConnect = useCallback((fromId: string, toId: string) => {
+    const fromNode = diagram.nodes.find(n => n.id === fromId);
+    const toNode = diagram.nodes.find(n => n.id === toId);
+    if (!fromNode || !toNode) return;
+
+    const edgeId = genId("e");
+    let newNodes = [...diagram.nodes];
+    let newEdges = [...diagram.edges];
+
+    // If connecting two blocks that are vertically offset (parallel-like),
+    // auto-create pickoff + summing junction
+    const dy = Math.abs(fromNode.y - toNode.y);
+    const bothBlocks = fromNode.type === "block" && toNode.type === "block";
+
+    if (bothBlocks && dy > 40) {
+      // Parallel pattern: add pickoff before from, summing after to
+      // Check if there's already a pickoff feeding fromNode
+      const existingPickoff = diagram.nodes.find(n =>
+        n.type === "pickoff" && diagram.edges.some(e => e.from === n.id && e.to === fromId)
+      );
+      const existingSum = diagram.nodes.find(n =>
+        n.type === "summing" && diagram.edges.some(e => e.from === toId && e.to === n.id)
+      );
+
+      if (!existingPickoff && !existingSum) {
+        // Create pickoff and summing junction
+        const pickId = genId("pk");
+        const sumId = genId("sm");
+        const minX = Math.min(fromNode.x, toNode.x);
+        const maxX = Math.max(fromNode.x + BLOCK_W, toNode.x + BLOCK_W);
+        const midY = (fromNode.y + BLOCK_H / 2 + toNode.y + BLOCK_H / 2) / 2;
+
+        newNodes.push(
+          { id: pickId, type: "pickoff", x: minX - 40, y: midY, label: "·" },
+          { id: sumId, type: "summing", x: maxX + 40, y: midY, label: "Σ", signs: {} },
+        );
+        newEdges.push(
+          { id: genId("e"), from: pickId, to: fromId },
+          { id: genId("e"), from: pickId, to: toId },
+          { id: genId("e"), from: fromId, to: sumId },
+          { id: genId("e"), from: toId, to: sumId },
+        );
+        pushDiagram({ nodes: newNodes, edges: newEdges });
+        return;
+      }
+    }
+
+    // Default: simple edge
+    newEdges.push({ id: edgeId, from: fromId, to: toId });
+    pushDiagram({ nodes: newNodes, edges: newEdges });
+  }, [diagram, pushDiagram]);
+
   const deleteSelected = useCallback(() => {
     if (!selectedId) return;
     const isEdge = diagram.edges.some(e => e.id === selectedId);
@@ -542,6 +622,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         return;
       }
       setSelectedId(null);
+      setShowPresets(false);
     }
   }, [pan]);
 
@@ -553,11 +634,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         setConnecting({ fromId: nodeId });
       } else {
         if (connecting.fromId !== nodeId) {
-          const edgeId = genId("e");
-          pushDiagram({
-            ...diagram,
-            edges: [...diagram.edges, { id: edgeId, from: connecting.fromId, to: nodeId }],
-          });
+          smartConnect(connecting.fromId, nodeId);
         }
         setConnecting(null);
       }
@@ -741,7 +818,37 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
 
         <div className="w-px h-5 bg-border mx-1" />
 
-        {/* Add nodes */}
+        {/* Block presets dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => setShowPresets(!showPresets)}
+            className={cn(
+              "px-2 py-1 text-[10px] font-mono rounded transition-all border",
+              showPresets
+                ? "bg-primary/20 text-primary border-primary/40"
+                : "text-muted-foreground hover:text-primary hover:bg-primary/10 border-transparent hover:border-primary/30"
+            )}
+          >
+            ▢ + Block ▾
+          </button>
+          {showPresets && (
+            <div className="absolute top-full left-0 mt-1 z-50 bg-card border border-border rounded-md shadow-lg py-1 min-w-[180px]">
+              {BLOCK_PRESETS.map((preset, i) => (
+                <button
+                  key={i}
+                  onClick={() => addBlockPreset(preset)}
+                  className="w-full text-left px-3 py-1.5 text-[10px] font-mono text-muted-foreground hover:text-foreground hover:bg-secondary/80 flex items-center gap-2 transition-colors"
+                >
+                  <span className="w-4 text-center text-primary">{preset.icon}</span>
+                  <span className="flex-1">{preset.label}</span>
+                  <span className="text-[8px] text-muted-foreground/60">{preset.tf.num}/{preset.tf.den}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Junction / IO nodes */}
         {TOOLBAR_ITEMS.map(item => (
           <button
             key={item.type}
@@ -816,7 +923,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
       {/* Connection mode indicator */}
       {connecting && (
         <div className="absolute top-12 left-3 z-40 bg-accent/20 border border-accent/40 rounded px-2 py-1 text-[10px] font-mono text-accent">
-          Click target node to complete connection… (Esc to cancel)
+          Click target node to connect · Blocks at different heights → auto parallel · (Esc to cancel)
         </div>
       )}
 
