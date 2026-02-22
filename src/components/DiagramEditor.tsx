@@ -470,6 +470,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [connecting, setConnecting] = useState<{ fromId: string } | null>(null);
   const [tool, setTool] = useState<"select" | "connect" | "delete">("select");
+  const [connectMode, setConnectMode] = useState<"auto" | "series" | "parallel">("auto");
   const [showPresets, setShowPresets] = useState(false);
 
   // Zoom/Pan state
@@ -532,24 +533,22 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     setShowPresets(false);
   }, [diagram, pushDiagram]);
 
-  /** Smart connect: when connecting block→block, auto-insert in series chain */
+  /** Smart connect: series chains blocks directly, parallel adds pickoff+sum scaffolding */
   const smartConnect = useCallback((fromId: string, toId: string) => {
     const fromNode = diagram.nodes.find(n => n.id === fromId);
     const toNode = diagram.nodes.find(n => n.id === toId);
     if (!fromNode || !toNode) return;
 
-    const edgeId = genId("e");
     let newNodes = [...diagram.nodes];
     let newEdges = [...diagram.edges];
 
-    // If connecting two blocks that are vertically offset (parallel-like),
-    // auto-create pickoff + summing junction
-    const dy = Math.abs(fromNode.y - toNode.y);
     const bothBlocks = fromNode.type === "block" && toNode.type === "block";
+    const dy = Math.abs(fromNode.y - toNode.y);
+    const shouldParallel = connectMode === "parallel" || (connectMode === "auto" && bothBlocks && dy > 40);
+    const shouldSeries = connectMode === "series" || (connectMode === "auto" && !shouldParallel);
 
-    if (bothBlocks && dy > 40) {
-      // Parallel pattern: add pickoff before from, summing after to
-      // Check if there's already a pickoff feeding fromNode
+    if (bothBlocks && shouldParallel) {
+      // Parallel: insert pickoff before both, summing after both
       const existingPickoff = diagram.nodes.find(n =>
         n.type === "pickoff" && diagram.edges.some(e => e.from === n.id && e.to === fromId)
       );
@@ -558,7 +557,6 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
       );
 
       if (!existingPickoff && !existingSum) {
-        // Create pickoff and summing junction
         const pickId = genId("pk");
         const sumId = genId("sm");
         const minX = Math.min(fromNode.x, toNode.x);
@@ -580,10 +578,10 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
       }
     }
 
-    // Default: simple edge
-    newEdges.push({ id: edgeId, from: fromId, to: toId });
+    // Series / default: direct edge
+    newEdges.push({ id: genId("e"), from: fromId, to: toId });
     pushDiagram({ nodes: newNodes, edges: newEdges });
-  }, [diagram, pushDiagram]);
+  }, [diagram, pushDiagram, connectMode]);
 
   const deleteSelected = useCallback(() => {
     if (!selectedId) return;
@@ -814,6 +812,30 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
               {t.icon}
             </button>
           ))}
+          {/* Connect sub-modes */}
+          {tool === "connect" && (
+            <div className="flex items-center gap-0.5 ml-1 pl-1 border-l border-border">
+              {([
+                { mode: "auto" as const, label: "Auto", tip: "Auto-detect from position" },
+                { mode: "series" as const, label: "Series", tip: "Direct series connection" },
+                { mode: "parallel" as const, label: "Parallel", tip: "Auto-insert pickoff + Σ" },
+              ]).map(cm => (
+                <button
+                  key={cm.mode}
+                  onClick={() => setConnectMode(cm.mode)}
+                  title={cm.tip}
+                  className={cn(
+                    "px-1.5 py-0.5 text-[9px] font-mono rounded transition-all",
+                    connectMode === cm.mode
+                      ? "bg-accent/20 text-accent border border-accent/40"
+                      : "text-muted-foreground hover:text-foreground border border-transparent"
+                  )}
+                >
+                  {cm.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="w-px h-5 bg-border mx-1" />
@@ -923,7 +945,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
       {/* Connection mode indicator */}
       {connecting && (
         <div className="absolute top-12 left-3 z-40 bg-accent/20 border border-accent/40 rounded px-2 py-1 text-[10px] font-mono text-accent">
-          Click target node to connect · Blocks at different heights → auto parallel · (Esc to cancel)
+          Click target node · Mode: <span className="font-bold">{connectMode === "auto" ? "Auto" : connectMode === "series" ? "Series" : "Parallel"}</span> · (Esc to cancel)
         </div>
       )}
 
