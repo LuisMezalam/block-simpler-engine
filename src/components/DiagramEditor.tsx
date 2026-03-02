@@ -24,26 +24,35 @@ function snap(v: number): number {
 function useHistory(initial: DiagramState) {
   const [history, setHistory] = useState<DiagramState[]>([initial]);
   const [index, setIndex] = useState(0);
+  const indexRef = useRef(0);
+  indexRef.current = index;
 
-  const current = history[index];
+  const current = history[index] ?? initial;
 
   const push = useCallback((state: DiagramState) => {
     setHistory(prev => {
-      const next = prev.slice(0, index + 1);
+      const next = prev.slice(0, indexRef.current + 1);
       next.push(state);
-      if (next.length > 50) next.shift(); // cap
+      let newIndex = next.length - 1;
+      if (next.length > 50) {
+        next.shift();
+        newIndex = next.length - 1;
+      }
+      setIndex(newIndex);
       return next;
     });
-    setIndex(prev => Math.min(prev + 1, 50));
-  }, [index]);
+  }, []);
 
   const undo = useCallback(() => {
     setIndex(prev => Math.max(0, prev - 1));
   }, []);
 
   const redo = useCallback(() => {
-    setIndex(prev => Math.min(prev + 1, history.length - 1));
-  }, [history.length]);
+    setHistory(prev => {
+      setIndex(i => Math.min(i + 1, prev.length - 1));
+      return prev;
+    });
+  }, []);
 
   const reset = useCallback((state: DiagramState) => {
     setHistory([state]);
