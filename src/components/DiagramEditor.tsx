@@ -181,11 +181,14 @@ function BlockNode({
 }
 
 function SummingNode({
-  node, selected, onMouseDown,
+  node, selected, onMouseDown, incomingEdges, allNodes, onToggleSign,
 }: {
   node: DiagramNode;
   selected: boolean;
   onMouseDown: (e: React.MouseEvent) => void;
+  incomingEdges: DiagramEdge[];
+  allNodes: DiagramNode[];
+  onToggleSign: (nodeId: string, edgeId: string) => void;
 }) {
   return (
     <g onMouseDown={onMouseDown} style={{ cursor: "grab" }}>
@@ -202,17 +205,34 @@ function SummingNode({
       >
         ⊕
       </text>
-      {node.signs && Object.entries(node.signs).map(([, sign], i) => (
-        <text
-          key={i}
-          x={node.x - JUNCTION_R - 4}
-          y={node.y + JUNCTION_R + 12 + i * 10}
-          fill={sign === "-" ? "hsl(0,75%,65%)" : "hsl(174,80%,55%)"}
-          fontSize={9} fontFamily="monospace"
-        >
-          {sign}
-        </text>
-      ))}
+      {/* Render clickable +/- sign labels near each incoming edge */}
+      {incomingEdges.map(edge => {
+        const fromNode = allNodes.find(n => n.id === edge.from);
+        if (!fromNode) return null;
+        const sign = node.signs?.[edge.id] ?? "+";
+        // Position the sign label near where the edge enters the junction
+        const inputPort = getInputPort(node);
+        const outputPort = getOutputPort(fromNode);
+        const dx = outputPort.x - inputPort.x;
+        const dy = outputPort.y - inputPort.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const offsetX = (dx / dist) * (JUNCTION_R + 10);
+        const offsetY = (dy / dist) * (JUNCTION_R + 10);
+        return (
+          <text
+            key={edge.id}
+            x={node.x + offsetX}
+            y={node.y + offsetY + 4}
+            textAnchor="middle"
+            fill={sign === "-" ? "hsl(0,75%,65%)" : "hsl(174,80%,55%)"}
+            fontSize={12} fontWeight="bold" fontFamily="monospace"
+            style={{ cursor: "pointer", userSelect: "none" }}
+            onClick={(e) => { e.stopPropagation(); onToggleSign(node.id, edge.id); }}
+          >
+            {sign}
+          </text>
+        );
+      })}
     </g>
   );
 }
@@ -572,15 +592,17 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         const maxX = Math.max(fromNode.x + BLOCK_W, toNode.x + BLOCK_W);
         const midY = (fromNode.y + BLOCK_H / 2 + toNode.y + BLOCK_H / 2) / 2;
 
+        const e_from_sum = genId("e");
+        const e_to_sum = genId("e");
         newNodes.push(
           { id: pickId, type: "pickoff", x: minX - 40, y: midY, label: "·" },
-          { id: sumId, type: "summing", x: maxX + 40, y: midY, label: "Σ", signs: {} },
+          { id: sumId, type: "summing", x: maxX + 40, y: midY, label: "Σ", signs: { [e_from_sum]: "+", [e_to_sum]: "+" } },
         );
         newEdges.push(
           { id: genId("e"), from: pickId, to: fromId },
           { id: genId("e"), from: pickId, to: toId },
-          { id: genId("e"), from: fromId, to: sumId },
-          { id: genId("e"), from: toId, to: sumId },
+          { id: e_from_sum, from: fromId, to: sumId },
+          { id: e_to_sum, from: toId, to: sumId },
         );
         pushDiagram({ nodes: newNodes, edges: newEdges });
         return;
@@ -588,16 +610,42 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     }
 
     // Series / default: direct edge
-    newEdges.push({ id: genId("e"), from: fromId, to: toId });
+    const newEdgeId = genId("e");
+    newEdges.push({ id: newEdgeId, from: fromId, to: toId });
+    // Auto-add sign if target is a summing junction
+    const targetNode = newNodes.find(n => n.id === toId);
+    if (targetNode?.type === "summing") {
+      targetNode.signs = { ...(targetNode.signs ?? {}), [newEdgeId]: "+" };
+    }
     pushDiagram({ nodes: newNodes, edges: newEdges });
   }, [diagram, pushDiagram, connectMode]);
+
+  const toggleSign = useCallback((nodeId: string, edgeId: string) => {
+    pushDiagram({
+      ...diagram,
+      nodes: diagram.nodes.map(n => {
+        if (n.id !== nodeId || n.type !== "summing") return n;
+        const currentSign = n.signs?.[edgeId] ?? "+";
+        return { ...n, signs: { ...(n.signs ?? {}), [edgeId]: currentSign === "+" ? "-" : "+" } };
+      }),
+    });
+  }, [diagram, pushDiagram]);
 
   const deleteSelected = useCallback(() => {
     if (!selectedId) return;
     const isEdge = diagram.edges.some(e => e.id === selectedId);
     if (isEdge) {
+      // Clean up sign entries on summing junctions when deleting an edge
+      const updatedNodes = diagram.nodes.map(n => {
+        if (n.type === "summing" && n.signs?.[selectedId]) {
+          const { [selectedId]: _, ...rest } = n.signs;
+          return { ...n, signs: rest };
+        }
+        return n;
+      });
       pushDiagram({
         ...diagram,
+        nodes: updatedNodes,
         edges: diagram.edges.filter(e => e.id !== selectedId),
       });
     } else {
@@ -1008,7 +1056,10 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
                   onMouseDown={mouseDown} onEditTF={setEditingNodeId} />;
               case "summing":
                 return <SummingNode key={node.id} node={node} selected={isSelected}
-                  onMouseDown={mouseDown} />;
+                  onMouseDown={mouseDown}
+                  incomingEdges={diagram.edges.filter(e => e.to === node.id)}
+                  allNodes={diagram.nodes}
+                  onToggleSign={toggleSign} />;
               case "pickoff":
                 return <PickoffNode key={node.id} node={node} selected={isSelected}
                   onMouseDown={mouseDown} />;
