@@ -790,6 +790,10 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (editingNodeId) return;
+      // Don't capture shortcuts when typing in input/textarea
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+
       if (e.key === "Delete" || e.key === "Backspace") {
         deleteSelected();
       }
@@ -807,10 +811,36 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         e.preventDefault();
         redo();
       }
+      // Connect mode shortcuts: S / P / A
+      if (e.key === "s" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        setConnectMode("series");
+        setTool("connect");
+      }
+      if (e.key === "p" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        setConnectMode("parallel");
+        setTool("connect");
+      }
+      if (e.key === "a" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        setConnectMode("auto");
+        setTool("connect");
+      }
+      // Block preset shortcuts: 1-9 and 0 (maps to presets 1-10)
+      if (!e.metaKey && !e.ctrlKey && !e.shiftKey) {
+        const num = parseInt(e.key);
+        if (!isNaN(num) && num >= 0 && num <= 9) {
+          const idx = num === 0 ? 9 : num - 1; // 1-9 → index 0-8, 0 → index 9
+          if (idx < BLOCK_PRESETS.length) {
+            addBlockPreset(BLOCK_PRESETS[idx]);
+          }
+        }
+      }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [deleteSelected, editingNodeId, undo, redo]);
+  }, [deleteSelected, editingNodeId, undo, redo, addBlockPreset, setConnectMode, setTool]);
 
   const editingNode = editingNodeId ? diagram.nodes.find(n => n.id === editingNodeId) : null;
 
