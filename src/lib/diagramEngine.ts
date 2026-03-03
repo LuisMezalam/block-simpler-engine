@@ -9,6 +9,7 @@
  */
 
 import { solve, SolverResult, ConnectionType } from "./solver";
+import { parsePoly, mulAll, format as fmtPoly, simplifyTF } from "./polynomial";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -141,6 +142,24 @@ function detectParallel(state: DiagramState): boolean {
   return false;
 }
 
+/** Combine multiple series blocks into one equivalent block by multiplying TFs */
+function combineSeriesBlocks(blocks: DiagramNode[]): { id: string; label: string; numStr: string; denStr: string } {
+  if (blocks.length === 1) {
+    const b = blocks[0];
+    return { id: b.id, label: b.label, numStr: b.tf!.num, denStr: b.tf!.den };
+  }
+  // Multiply all numerators and denominators
+  const numPoly = mulAll(blocks.map(b => parsePoly(b.tf!.num)));
+  const denPoly = mulAll(blocks.map(b => parsePoly(b.tf!.den)));
+  const simplified = simplifyTF({ num: numPoly, den: denPoly });
+  return {
+    id: blocks.map(b => b.id).join("_"),
+    label: blocks.map(b => b.label).join("·"),
+    numStr: fmtPoly(simplified.num),
+    denStr: fmtPoly(simplified.den),
+  };
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export type AnalysisResult = {
@@ -181,10 +200,8 @@ export function analyzeDiagram(state: DiagramState): AnalysisResult {
         return { topology: "unknown", error: "Cannot determine forward path blocks." };
       }
 
-      // If forward path has multiple blocks, they're in series — combine first
-      const fwdBlock = forwardBlocks.length === 1
-        ? forwardBlocks[0]
-        : forwardBlocks[0]; // simplified: just use first for now
+      // Combine multiple forward-path blocks in series into one equivalent block
+      const fwdBlock = combineSeriesBlocks(forwardBlocks);
 
       const fbkBlocks = feedback.feedbackBlocks;
       const connectionType: ConnectionType = feedback.isPositive ? "feedback_positive" : "feedback_negative";
@@ -194,23 +211,24 @@ export function analyzeDiagram(state: DiagramState): AnalysisResult {
         const result = solve("unity_feedback", [{
           id: fwdBlock.id,
           label: fwdBlock.label,
-          numStr: fwdBlock.tf!.num,
-          denStr: fwdBlock.tf!.den,
+          numStr: fwdBlock.numStr,
+          denStr: fwdBlock.denStr,
         }]);
         return { topology: "unity_feedback", result };
       }
 
-      const fbk = fbkBlocks[0];
+      // Combine multiple feedback-path blocks in series too
+      const fbk = combineSeriesBlocks(fbkBlocks);
       const result = solve(connectionType, [{
         id: fwdBlock.id,
         label: fwdBlock.label,
-        numStr: fwdBlock.tf!.num,
-        denStr: fwdBlock.tf!.den,
+        numStr: fwdBlock.numStr,
+        denStr: fwdBlock.denStr,
       }], {
         id: fbk.id,
         label: fbk.label,
-        numStr: fbk.tf!.num,
-        denStr: fbk.tf!.den,
+        numStr: fbk.numStr,
+        denStr: fbk.denStr,
       });
       return { topology: connectionType, result };
     }
