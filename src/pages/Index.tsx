@@ -533,10 +533,10 @@ export default function Index() {
         </div>
 
         {/* Main canvas + result */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-y-auto">
           {/* Interactive Block Diagram Editor (builder tab) */}
           {activeTab === "builder" && (
-            <div className="panel-section m-4 mb-2 flex-1 min-h-[400px] flex flex-col overflow-hidden">
+            <div className="panel-section m-4 mb-2 h-[500px] flex flex-col overflow-hidden flex-shrink-0">
               <div className="px-4 py-2 border-b border-border flex items-center gap-2">
                 <div className="w-1.5 h-1.5 rounded-full bg-signal" />
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">

@@ -4,12 +4,17 @@
  * Analyzes a visual block diagram graph (nodes + edges) to determine
  * the topology and compute G_eq(s) using the typed solver.
  *
+ * Supports nested (inner/outer) feedback loops via recursive reduction:
+ * 1. Detect the innermost feedback loop
+ * 2. Reduce it to an equivalent block
+ * 3. Re-analyze the simplified diagram
+ *
  * Node types: input, output, block, summing, pickoff
  * Edges connect output ports to input ports.
  */
 
 import { solve, SolverResult, ConnectionType } from "./solver";
-import { parsePoly, mulAll, format as fmtPoly, simplifyTF } from "./polynomial";
+import { parsePoly, mulAll, format as fmtPoly, simplifyTF, TypedTF, mul, add, sub } from "./polynomial";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -66,13 +71,24 @@ function getBlocksInOrder(state: DiagramState): DiagramNode[] {
   return ordered;
 }
 
-/** Detect if there's a feedback loop (a path from output side back to a summing junction) */
-function detectFeedbackLoop(state: DiagramState): {
+/** 
+ * Detect feedback loops. Returns ALL detected loops sorted innermost-first.
+ * Each loop includes the summing junction, pickoff, forward blocks, feedback blocks, and sign.
+ */
+interface FeedbackLoop {
   hasFeedback: boolean;
   feedbackBlocks: DiagramNode[];
   forwardBlocks: DiagramNode[];
   isPositive: boolean;
-} {
+  /** The summing junction node at the start of this loop */
+  sumNode?: DiagramNode;
+  /** The pickoff node that starts the feedback path */
+  pickoffNode?: DiagramNode;
+  /** All node IDs involved in this loop (for nested reduction) */
+  loopNodeIds: Set<string>;
+}
+
+function detectFeedbackLoop(state: DiagramState): FeedbackLoop {
   const { nodes, edges } = state;
   const summingNodes = nodes.filter(n => n.type === "summing");
   const pickoffNodes = nodes.filter(n => n.type === "pickoff");
@@ -92,26 +108,30 @@ function detectFeedbackLoop(state: DiagramState): {
         const feedbackPath: DiagramNode[] = [];
         let current = target;
         const fbVisited = new Set<string>();
+        fbVisited.add(pickoff.id);
 
         while (current && !fbVisited.has(current.id)) {
           fbVisited.add(current.id);
           if (current.type === "block") feedbackPath.push(current);
           if (current.type === "summing") {
-            // Found feedback loop
-            const forwardBlocks = getBlocksInOrder(state).filter(
-              b => !feedbackPath.includes(b)
-            );
+            // Found feedback loop — gather forward blocks between this summing junction and the pickoff
+            const forwardBlocks = getForwardPathBlocks(state, current.id, pickoff.id);
 
             // Check sign on the summing junction
             const sumNode = current;
             const incomingEdge = edges.find(e => e.to === sumNode.id && fbVisited.has(e.from));
             const sign = sumNode.signs?.[incomingEdge?.id ?? ""] ?? "-";
 
+            const loopNodeIds = new Set<string>([sumNode.id, pickoff.id, ...feedbackPath.map(b => b.id), ...forwardBlocks.map(b => b.id)]);
+
             return {
               hasFeedback: true,
               feedbackBlocks: feedbackPath,
               forwardBlocks,
               isPositive: sign === "+",
+              sumNode,
+              pickoffNode: pickoff,
+              loopNodeIds,
             };
           }
           // Follow next edge
@@ -122,14 +142,114 @@ function detectFeedbackLoop(state: DiagramState): {
     }
   }
 
-  return { hasFeedback: false, feedbackBlocks: [], forwardBlocks: [], isPositive: false };
+  return { hasFeedback: false, feedbackBlocks: [], forwardBlocks: [], isPositive: false, loopNodeIds: new Set() };
+}
+
+/** Get blocks in the forward path between a summing junction and a pickoff point */
+function getForwardPathBlocks(state: DiagramState, sumId: string, pickoffId: string): DiagramNode[] {
+  const { nodes, edges } = state;
+  const blocks: DiagramNode[] = [];
+  const visited = new Set<string>();
+
+  function dfs(nodeId: string): boolean {
+    if (visited.has(nodeId)) return false;
+    visited.add(nodeId);
+    if (nodeId === pickoffId) return true;
+
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) return false;
+
+    const outEdges = edges.filter(e => e.from === nodeId);
+    for (const e of outEdges) {
+      if (dfs(e.to)) {
+        if (node.type === "block") blocks.unshift(node);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  dfs(sumId);
+  return blocks;
+}
+
+/**
+ * Reduce a detected feedback loop into an equivalent block node.
+ * Returns a new DiagramState with the loop replaced by a single equivalent block.
+ */
+function reduceInnerLoop(state: DiagramState, loop: FeedbackLoop): DiagramState {
+  if (!loop.sumNode || !loop.pickoffNode) return state;
+
+  const fwdBlock = combineSeriesBlocks(loop.forwardBlocks);
+  const NG = parsePoly(fwdBlock.numStr);
+  const DG = parsePoly(fwdBlock.denStr);
+
+  let numPoly: ReturnType<typeof parsePoly>;
+  let denPoly: ReturnType<typeof parsePoly>;
+
+  if (loop.feedbackBlocks.length === 0) {
+    // Unity feedback
+    numPoly = NG;
+    denPoly = add(DG, NG);
+  } else {
+    const fbk = combineSeriesBlocks(loop.feedbackBlocks);
+    const NH = parsePoly(fbk.numStr);
+    const DH = parsePoly(fbk.denStr);
+    numPoly = mul(NG, DH);
+    if (loop.isPositive) {
+      denPoly = sub(mul(DG, DH), mul(NG, NH));
+    } else {
+      denPoly = add(mul(DG, DH), mul(NG, NH));
+    }
+  }
+
+  const simplified = simplifyTF({ num: numPoly, den: denPoly });
+  const eqLabel = `[${fwdBlock.label}]_cl`;
+  const eqId = `eq_${loop.sumNode.id}_${loop.pickoffNode.id}`;
+
+  // Create equivalent block at the summing junction position
+  const eqNode: DiagramNode = {
+    id: eqId,
+    type: "block",
+    x: loop.sumNode.x,
+    y: loop.sumNode.y,
+    label: eqLabel,
+    tf: { num: fmtPoly(simplified.num), den: fmtPoly(simplified.den) },
+  };
+
+  // Remove loop nodes (summing, pickoff, feedback blocks, forward blocks inside the loop)
+  const removeIds = new Set<string>([
+    loop.sumNode.id,
+    loop.pickoffNode.id,
+    ...loop.feedbackBlocks.map(b => b.id),
+    ...loop.forwardBlocks.map(b => b.id),
+  ]);
+
+  // Find edges into the summing junction (from outside the loop = input edges)
+  const { edges, nodes } = state;
+  const inputEdges = edges.filter(e => e.to === loop.sumNode!.id && !removeIds.has(e.from));
+  const outputEdges = edges.filter(e => e.from === loop.pickoffNode!.id && !removeIds.has(e.to));
+
+  // Remove all edges connected to removed nodes
+  const newEdges = edges.filter(e => !removeIds.has(e.from) && !removeIds.has(e.to));
+
+  // Re-wire: connect input sources → equivalent block → output targets
+  for (const ie of inputEdges) {
+    newEdges.push({ id: `${ie.id}_re`, from: ie.from, to: eqId });
+  }
+  for (const oe of outputEdges) {
+    newEdges.push({ id: `${oe.id}_re`, from: eqId, to: oe.to });
+  }
+
+  const newNodes = nodes.filter(n => !removeIds.has(n.id));
+  newNodes.push(eqNode);
+
+  return { nodes: newNodes, edges: newEdges };
 }
 
 /** Detect parallel branches (multiple paths from one node to another) */
 function detectParallel(state: DiagramState): boolean {
   const { nodes, edges } = state;
-  // Check if any node has multiple outgoing edges to different blocks
-  // that then merge at a summing junction
   const summingNodes = nodes.filter(n => n.type === "summing");
 
   for (const sum of summingNodes) {
@@ -172,9 +292,15 @@ export type AnalysisResult = {
 
 /**
  * Analyze a diagram and compute G_eq(s).
- * Determines topology automatically from the graph structure.
+ * Supports nested feedback loops via recursive reduction:
+ * detects innermost loop → reduces to equivalent block → re-analyzes.
  */
-export function analyzeDiagram(state: DiagramState): AnalysisResult {
+export function analyzeDiagram(state: DiagramState, depth: number = 0): AnalysisResult {
+  // Guard against infinite recursion
+  if (depth > 10) {
+    return { topology: "unknown", error: "Too many nested loops (max depth 10)." };
+  }
+
   const { nodes, edges } = state;
   const blocks = nodes.filter(n => n.type === "block");
 
@@ -190,9 +316,20 @@ export function analyzeDiagram(state: DiagramState): AnalysisResult {
   }
 
   try {
-    // Check for feedback first
+    // Check for feedback loop
     const feedback = detectFeedbackLoop(state);
     if (feedback.hasFeedback) {
+      // Count total feedback loops — if more than one, reduce innermost first then recurse
+      const summingCount = nodes.filter(n => n.type === "summing").length;
+      const pickoffCount = nodes.filter(n => n.type === "pickoff").length;
+
+      if (summingCount > 1 && pickoffCount > 1) {
+        // Multiple loops detected — reduce this one and re-analyze
+        const reducedState = reduceInnerLoop(state, feedback);
+        return analyzeDiagram(reducedState, depth + 1);
+      }
+
+      // Single feedback loop — solve directly
       const forwardBlocks = feedback.forwardBlocks.length > 0
         ? feedback.forwardBlocks : blocks.filter(b => !feedback.feedbackBlocks.includes(b));
 
@@ -200,35 +337,25 @@ export function analyzeDiagram(state: DiagramState): AnalysisResult {
         return { topology: "unknown", error: "Cannot determine forward path blocks." };
       }
 
-      // Combine multiple forward-path blocks in series into one equivalent block
       const fwdBlock = combineSeriesBlocks(forwardBlocks);
-
       const fbkBlocks = feedback.feedbackBlocks;
       const connectionType: ConnectionType = feedback.isPositive ? "feedback_positive" : "feedback_negative";
 
       if (fbkBlocks.length === 0) {
-        // Unity feedback
         const result = solve("unity_feedback", [{
-          id: fwdBlock.id,
-          label: fwdBlock.label,
-          numStr: fwdBlock.numStr,
-          denStr: fwdBlock.denStr,
+          id: fwdBlock.id, label: fwdBlock.label,
+          numStr: fwdBlock.numStr, denStr: fwdBlock.denStr,
         }]);
         return { topology: "unity_feedback", result };
       }
 
-      // Combine multiple feedback-path blocks in series too
       const fbk = combineSeriesBlocks(fbkBlocks);
       const result = solve(connectionType, [{
-        id: fwdBlock.id,
-        label: fwdBlock.label,
-        numStr: fwdBlock.numStr,
-        denStr: fwdBlock.denStr,
+        id: fwdBlock.id, label: fwdBlock.label,
+        numStr: fwdBlock.numStr, denStr: fwdBlock.denStr,
       }], {
-        id: fbk.id,
-        label: fbk.label,
-        numStr: fbk.numStr,
-        denStr: fbk.denStr,
+        id: fbk.id, label: fbk.label,
+        numStr: fbk.numStr, denStr: fbk.denStr,
       });
       return { topology: connectionType, result };
     }
@@ -236,20 +363,17 @@ export function analyzeDiagram(state: DiagramState): AnalysisResult {
     // Check for parallel
     if (detectParallel(state)) {
       const result = solve("parallel", blocks.map(b => ({
-        id: b.id,
-        label: b.label,
-        numStr: b.tf!.num,
-        denStr: b.tf!.den,
+        id: b.id, label: b.label,
+        numStr: b.tf!.num, denStr: b.tf!.den,
       })));
       return { topology: "parallel", result };
     }
 
-    // Default: series (blocks connected in chain)
+    // Default: series
     const orderedBlocks = getBlocksInOrder(state);
     const blocksToUse = orderedBlocks.length >= 2 ? orderedBlocks : blocks;
 
     if (blocksToUse.length === 1) {
-      // Single block — just return it as-is
       const b = blocksToUse[0];
       const result = solve("series", [
         { id: b.id, label: b.label, numStr: b.tf!.num, denStr: b.tf!.den },
@@ -259,10 +383,8 @@ export function analyzeDiagram(state: DiagramState): AnalysisResult {
     }
 
     const result = solve("series", blocksToUse.map(b => ({
-      id: b.id,
-      label: b.label,
-      numStr: b.tf!.num,
-      denStr: b.tf!.den,
+      id: b.id, label: b.label,
+      numStr: b.tf!.num, denStr: b.tf!.den,
     })));
     return { topology: "series", result };
   } catch (e: any) {
