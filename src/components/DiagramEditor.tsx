@@ -6,7 +6,7 @@ import {
 } from "@/lib/diagramEngine";
 import { SolverResult } from "@/lib/solver";
 import { cn } from "@/lib/utils";
-import { toast } from "sonner";
+import { useToast } from "@/hooks/use-toast";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -503,6 +503,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
   const [connectMode, setConnectMode] = useState<"auto" | "series" | "parallel">("auto");
   const [showPresets, setShowPresets] = useState(false);
   const [alignGuides, setAlignGuides] = useState<{ x?: number; y?: number }>({});
+  const { toast } = useToast();
 
   // Zoom/Pan state
   const [zoom, setZoom] = useState(1);
@@ -805,7 +806,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     setConnecting(null);
     setZoom(1);
     setPan({ x: 0, y: 0 });
-    if (name) toast(`Loaded ${name} template`);
+    if (name) toast({ title: `Loaded ${name} template` });
   }, [resetDiagram]);
 
   const fitToView = useCallback(() => {
@@ -832,7 +833,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     const cy = (minY + maxY) / 2;
     setZoom(scale);
     setPan({ x: rect.width / 2 - cx * scale, y: rect.height / 2 - cy * scale });
-    toast("Fit to view");
+    toast({ title: "Fit to view" });
   }, [diagram.nodes]);
 
   // ─── Keyboard ────────────────────────────────────────────────────
@@ -866,19 +867,19 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         e.preventDefault();
         setConnectMode("series");
         setTool("connect");
-        toast("Series connect mode");
+        toast({ title: "Series connect mode" });
       }
       if (e.key === "p" && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         setConnectMode("parallel");
         setTool("connect");
-        toast("Parallel connect mode");
+        toast({ title: "Parallel connect mode" });
       }
       if (e.key === "a" && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         setConnectMode("auto");
         setTool("connect");
-        toast("Auto connect mode");
+        toast({ title: "Auto connect mode" });
       }
       // Block preset shortcuts: 1-9 and 0 (maps to presets 1-10)
       if (!e.metaKey && !e.ctrlKey && !e.shiftKey) {
@@ -887,7 +888,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
           const idx = num === 0 ? 9 : num - 1; // 1-9 → index 0-8, 0 → index 9
           if (idx < BLOCK_PRESETS.length) {
             addBlockPreset(BLOCK_PRESETS[idx]);
-            toast(`Added ${BLOCK_PRESETS[idx].label}`);
+            toast({ title: `Added ${BLOCK_PRESETS[idx].label}` });
           }
         }
       }
@@ -899,7 +900,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [deleteSelected, editingNodeId, undo, redo, addBlockPreset, setConnectMode, setTool, fitToView]);
+  }, [deleteSelected, editingNodeId, undo, redo, addBlockPreset, setConnectMode, setTool, fitToView, toast]);
 
   const editingNode = editingNodeId ? diagram.nodes.find(n => n.id === editingNodeId) : null;
 
