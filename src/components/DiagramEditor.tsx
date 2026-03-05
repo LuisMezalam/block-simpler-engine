@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from "react";
+import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import {
   DiagramState, DiagramNode, DiagramEdge, NodeType,
   genId, analyzeDiagram,
@@ -6,6 +6,7 @@ import {
 } from "@/lib/diagramEngine";
 import { SolverResult } from "@/lib/solver";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -501,6 +502,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
   const [tool, setTool] = useState<"select" | "connect" | "delete">("select");
   const [connectMode, setConnectMode] = useState<"auto" | "series" | "parallel">("auto");
   const [showPresets, setShowPresets] = useState(false);
+  const [alignGuides, setAlignGuides] = useState<{ x?: number; y?: number }>({});
 
   // Zoom/Pan state
   const [zoom, setZoom] = useState(1);
@@ -719,6 +721,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
   }, [tool, connecting, diagram, pushDiagram, getSvgPoint]);
 
   useEffect(() => {
+    const ALIGN_THRESHOLD = 8;
     const handleMouseMove = (e: MouseEvent) => {
       if (isPanning.current) {
         setPan({
@@ -731,12 +734,31 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
       const { x, y } = getSvgPoint(e.clientX, e.clientY);
       const nx = snap(x - draggingRef.current.offsetX);
       const ny = snap(y - draggingRef.current.offsetY);
+
+      // Compute alignment guides
+      const dragNode = diagram.nodes.find(n => n.id === draggingRef.current!.nodeId);
+      if (dragNode) {
+        const dragCX = dragNode.type === "block" ? nx + BLOCK_W / 2 : nx;
+        const dragCY = dragNode.type === "block" ? ny + BLOCK_H / 2 : ny;
+        let guideX: number | undefined;
+        let guideY: number | undefined;
+        for (const n of diagram.nodes) {
+          if (n.id === draggingRef.current!.nodeId) continue;
+          const cx = n.type === "block" ? n.x + BLOCK_W / 2 : n.x;
+          const cy = n.type === "block" ? n.y + BLOCK_H / 2 : n.y;
+          if (Math.abs(cx - dragCX) < ALIGN_THRESHOLD) guideX = cx;
+          if (Math.abs(cy - dragCY) < ALIGN_THRESHOLD) guideY = cy;
+        }
+        setAlignGuides({ x: guideX, y: guideY });
+      }
+
       updateNode(draggingRef.current.nodeId, { x: nx, y: ny });
     };
 
     const handleMouseUp = () => {
       isPanning.current = false;
       draggingRef.current = null;
+      setAlignGuides({});
     };
 
     window.addEventListener("mousemove", handleMouseMove);
@@ -745,7 +767,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [updateNode, getSvgPoint]);
+  }, [updateNode, getSvgPoint, diagram.nodes]);
 
   // Wheel zoom
   useEffect(() => {
@@ -777,13 +799,41 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     setEditingNodeId(null);
   }, [diagram, pushDiagram]);
 
-  const loadTemplate = useCallback((create: () => DiagramState) => {
+  const loadTemplate = useCallback((create: () => DiagramState, name?: string) => {
     resetDiagram(create());
     setSelectedId(null);
     setConnecting(null);
     setZoom(1);
     setPan({ x: 0, y: 0 });
+    if (name) toast(`Loaded ${name} template`);
   }, [resetDiagram]);
+
+  const fitToView = useCallback(() => {
+    if (diagram.nodes.length === 0) return;
+    const PAD = 40;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of diagram.nodes) {
+      const x1 = n.type === "block" ? n.x : n.x - JUNCTION_R;
+      const y1 = n.type === "block" ? n.y : n.y - JUNCTION_R;
+      const x2 = n.type === "block" ? n.x + BLOCK_W : n.x + JUNCTION_R;
+      const y2 = n.type === "block" ? n.y + BLOCK_H : n.y + JUNCTION_R;
+      minX = Math.min(minX, x1);
+      minY = Math.min(minY, y1);
+      maxX = Math.max(maxX, x2);
+      maxY = Math.max(maxY, y2);
+    }
+    const contentW = maxX - minX + PAD * 2;
+    const contentH = maxY - minY + PAD * 2;
+    const svgEl = svgRef.current;
+    if (!svgEl) return;
+    const rect = svgEl.getBoundingClientRect();
+    const scale = Math.min(rect.width / contentW, rect.height / contentH, 2);
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    setZoom(scale);
+    setPan({ x: rect.width / 2 - cx * scale, y: rect.height / 2 - cy * scale });
+    toast("Fit to view");
+  }, [diagram.nodes]);
 
   // ─── Keyboard ────────────────────────────────────────────────────
 
@@ -816,16 +866,19 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         e.preventDefault();
         setConnectMode("series");
         setTool("connect");
+        toast("Series connect mode");
       }
       if (e.key === "p" && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         setConnectMode("parallel");
         setTool("connect");
+        toast("Parallel connect mode");
       }
       if (e.key === "a" && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         setConnectMode("auto");
         setTool("connect");
+        toast("Auto connect mode");
       }
       // Block preset shortcuts: 1-9 and 0 (maps to presets 1-10)
       if (!e.metaKey && !e.ctrlKey && !e.shiftKey) {
@@ -834,13 +887,19 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
           const idx = num === 0 ? 9 : num - 1; // 1-9 → index 0-8, 0 → index 9
           if (idx < BLOCK_PRESETS.length) {
             addBlockPreset(BLOCK_PRESETS[idx]);
+            toast(`Added ${BLOCK_PRESETS[idx].label}`);
           }
         }
+      }
+      // Fit to view
+      if (e.key === "f" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        fitToView();
       }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [deleteSelected, editingNodeId, undo, redo, addBlockPreset, setConnectMode, setTool]);
+  }, [deleteSelected, editingNodeId, undo, redo, addBlockPreset, setConnectMode, setTool, fitToView]);
 
   const editingNode = editingNodeId ? diagram.nodes.find(n => n.id === editingNodeId) : null;
 
@@ -975,7 +1034,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         {TEMPLATES.map(t => (
           <button
             key={t.label}
-            onClick={() => loadTemplate(t.create)}
+            onClick={() => loadTemplate(t.create, t.label)}
             className="px-2 py-1 text-[10px] font-mono text-muted-foreground hover:text-accent hover:bg-accent/10 rounded transition-all"
           >
             {t.label}
@@ -1007,6 +1066,13 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
             title="Reset view"
           >
             ⊡
+          </button>
+          <button
+            onClick={fitToView}
+            className="px-1.5 py-0.5 text-[9px] font-mono text-muted-foreground hover:text-foreground rounded hover:bg-secondary"
+            title="Fit to view (F)"
+          >
+            ⊞
           </button>
         </div>
 
@@ -1055,6 +1121,21 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
           </defs>
           <rect x={-pan.x / zoom} y={-pan.y / zoom} width={600 / zoom} height={350 / zoom} fill="url(#grid)" />
 
+          {/* Alignment guides */}
+          {alignGuides.x !== undefined && (
+            <line
+              x1={alignGuides.x} y1={-pan.y / zoom}
+              x2={alignGuides.x} y2={(-pan.y + 350) / zoom}
+              stroke="hsl(196,85%,50%)" strokeWidth={0.8} strokeDasharray="4 3" opacity={0.7}
+            />
+          )}
+          {alignGuides.y !== undefined && (
+            <line
+              x1={-pan.x / zoom} y1={alignGuides.y}
+              x2={(-pan.x + 600) / zoom} y2={alignGuides.y}
+              stroke="hsl(196,85%,50%)" strokeWidth={0.8} strokeDasharray="4 3" opacity={0.7}
+            />
+          )}
           {/* Edges */}
           {diagram.edges.map(edge => (
             <EdgeLine
@@ -1117,7 +1198,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         <span>{diagram.edges.length} edges</span>
         <span>{diagram.nodes.filter(n => n.type === "block").length} blocks</span>
         {selectedId && <span className="text-accent">Selected: {selectedId}</span>}
-        <span className="ml-auto">Ctrl+Z undo · Ctrl+Y redo · Scroll to zoom · Alt+drag to pan</span>
+        <span className="ml-auto">S/P/A modes · F fit · Ctrl+Z/Y undo/redo · Scroll zoom · Alt+drag pan</span>
       </div>
     </div>
   );
