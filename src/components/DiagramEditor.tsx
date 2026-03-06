@@ -900,7 +900,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [deleteSelected, editingNodeId, undo, redo, addBlockPreset, setConnectMode, setTool, fitToView, toast]);
+  }, [deleteSelected, editingNodeId, undo, redo, addBlockPreset, setConnectMode, setTool, fitToView]);
 
   const editingNode = editingNodeId ? diagram.nodes.find(n => n.id === editingNodeId) : null;
 
