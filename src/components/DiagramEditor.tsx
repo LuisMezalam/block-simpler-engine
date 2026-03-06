@@ -503,7 +503,13 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
   const [connectMode, setConnectMode] = useState<"auto" | "series" | "parallel">("auto");
   const [showPresets, setShowPresets] = useState(false);
   const [alignGuides, setAlignGuides] = useState<{ x?: number; y?: number }>({});
-  
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout>>();
+  const toast = useCallback((msg: string) => {
+    setToastMsg(msg);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToastMsg(null), 1800);
+  }, []);
 
   // Zoom/Pan state
   const [zoom, setZoom] = useState(1);
