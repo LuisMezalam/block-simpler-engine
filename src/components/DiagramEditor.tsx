@@ -6,7 +6,7 @@ import {
 } from "@/lib/diagramEngine";
 import { SolverResult } from "@/lib/solver";
 import { cn } from "@/lib/utils";
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
