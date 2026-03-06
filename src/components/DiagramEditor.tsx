@@ -813,7 +813,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     setZoom(1);
     setPan({ x: 0, y: 0 });
     if (name) toast(`Loaded ${name} template`);
-  }, [resetDiagram]);
+  }, [resetDiagram, toast]);
 
   const fitToView = useCallback(() => {
     if (diagram.nodes.length === 0) return;
