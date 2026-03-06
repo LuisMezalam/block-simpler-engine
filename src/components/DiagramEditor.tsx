@@ -6,7 +6,7 @@ import {
 } from "@/lib/diagramEngine";
 import { SolverResult } from "@/lib/solver";
 import { cn } from "@/lib/utils";
-import { useToast } from "@/hooks/use-toast";
+
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -503,7 +503,13 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
   const [connectMode, setConnectMode] = useState<"auto" | "series" | "parallel">("auto");
   const [showPresets, setShowPresets] = useState(false);
   const [alignGuides, setAlignGuides] = useState<{ x?: number; y?: number }>({});
-  const { toast } = useToast();
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout>>();
+  const toast = useCallback((msg: string) => {
+    setToastMsg(msg);
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToastMsg(null), 1800);
+  }, []);
 
   // Zoom/Pan state
   const [zoom, setZoom] = useState(1);
@@ -806,8 +812,8 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     setConnecting(null);
     setZoom(1);
     setPan({ x: 0, y: 0 });
-    if (name) toast({ title: `Loaded ${name} template` });
-  }, [resetDiagram]);
+    if (name) toast(`Loaded ${name} template`);
+  }, [resetDiagram, toast]);
 
   const fitToView = useCallback(() => {
     if (diagram.nodes.length === 0) return;
@@ -833,8 +839,8 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     const cy = (minY + maxY) / 2;
     setZoom(scale);
     setPan({ x: rect.width / 2 - cx * scale, y: rect.height / 2 - cy * scale });
-    toast({ title: "Fit to view" });
-  }, [diagram.nodes]);
+    toast("Fit to view");
+  }, [diagram.nodes, toast]);
 
   // ─── Keyboard ────────────────────────────────────────────────────
 
@@ -867,19 +873,19 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         e.preventDefault();
         setConnectMode("series");
         setTool("connect");
-        toast({ title: "Series connect mode" });
+        toast("Series connect mode");
       }
       if (e.key === "p" && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         setConnectMode("parallel");
         setTool("connect");
-        toast({ title: "Parallel connect mode" });
+        toast("Parallel connect mode");
       }
       if (e.key === "a" && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         setConnectMode("auto");
         setTool("connect");
-        toast({ title: "Auto connect mode" });
+        toast("Auto connect mode");
       }
       // Block preset shortcuts: 1-9 and 0 (maps to presets 1-10)
       if (!e.metaKey && !e.ctrlKey && !e.shiftKey) {
@@ -888,7 +894,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
           const idx = num === 0 ? 9 : num - 1; // 1-9 → index 0-8, 0 → index 9
           if (idx < BLOCK_PRESETS.length) {
             addBlockPreset(BLOCK_PRESETS[idx]);
-            toast({ title: `Added ${BLOCK_PRESETS[idx].label}` });
+            toast(`Added ${BLOCK_PRESETS[idx].label}`);
           }
         }
       }
@@ -900,7 +906,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [deleteSelected, editingNodeId, undo, redo, addBlockPreset, setConnectMode, setTool, fitToView, toast]);
+  }, [deleteSelected, editingNodeId, undo, redo, addBlockPreset, setConnectMode, setTool, fitToView]);
 
   const editingNode = editingNodeId ? diagram.nodes.find(n => n.id === editingNodeId) : null;
 
@@ -1192,6 +1198,13 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
           />
         )}
       </div>
+
+      {/* Inline toast notification */}
+      {toastMsg && (
+        <div className="fixed top-4 right-4 z-[9999] bg-accent text-accent-foreground px-4 py-2 rounded-md shadow-lg text-xs font-mono animate-in fade-in slide-in-from-top-2 duration-200">
+          {toastMsg}
+        </div>
+      )}
 
       {/* Status bar */}
       <div className="flex items-center gap-3 px-3 py-1.5 border-t border-border text-[9px] font-mono text-muted-foreground">
