@@ -1201,7 +1201,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
 
       {/* Inline toast notification */}
       {toastMsg && (
-        <div className="absolute top-16 right-4 z-50 bg-accent text-accent-foreground px-4 py-2 rounded-md shadow-lg text-xs font-mono animate-in fade-in slide-in-from-top-2 duration-200">
+        <div className="fixed top-4 right-4 z-[9999] bg-accent text-accent-foreground px-4 py-2 rounded-md shadow-lg text-xs font-mono animate-in fade-in slide-in-from-top-2 duration-200">
           {toastMsg}
         </div>
       )}
