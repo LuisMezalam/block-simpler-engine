@@ -504,6 +504,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
   const [showPresets, setShowPresets] = useState(false);
   const [alignGuides, setAlignGuides] = useState<{ x?: number; y?: number }>({});
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const [showCheatsheet, setShowCheatsheet] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>();
   const toast = useCallback((msg: string) => {
     setToastMsg(msg);
@@ -903,6 +904,11 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         e.preventDefault();
         fitToView();
       }
+      // Cheatsheet
+      if (e.key === "?" || (e.shiftKey && e.key === "/")) {
+        e.preventDefault();
+        setShowCheatsheet(v => !v);
+      }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
@@ -1206,13 +1212,46 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         </div>
       )}
 
+      {/* Keyboard Shortcut Cheatsheet */}
+      {showCheatsheet && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setShowCheatsheet(false)}>
+          <div className="bg-card text-card-foreground border border-border rounded-lg shadow-2xl w-[420px] max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+              <h2 className="text-sm font-semibold tracking-wide uppercase">Keyboard Shortcuts</h2>
+              <button onClick={() => setShowCheatsheet(false)} className="text-muted-foreground hover:text-foreground text-lg leading-none">&times;</button>
+            </div>
+            <div className="px-5 py-4 space-y-4 text-xs">
+              {[
+                { title: "General", items: [["Esc", "Deselect / cancel"], ["Del / Backspace", "Delete selected"], ["?", "Toggle this cheatsheet"]] },
+                { title: "History", items: [["Ctrl+Z", "Undo"], ["Ctrl+Y / Ctrl+Shift+Z", "Redo"]] },
+                { title: "Connect Modes", items: [["S", "Series mode"], ["P", "Parallel mode"], ["A", "Auto mode"]] },
+                { title: "Navigation", items: [["F", "Fit to view"], ["Scroll", "Zoom in/out"], ["Alt+Drag", "Pan canvas"]] },
+                { title: "Blocks", items: [["1–9", "Insert preset 1–9"], ["0", "Insert preset 10"]] },
+              ].map(section => (
+                <div key={section.title}>
+                  <h3 className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">{section.title}</h3>
+                  <div className="space-y-1.5">
+                    {(section.items as string[][]).map(([key, desc]) => (
+                      <div key={key} className="flex items-center justify-between">
+                        <kbd className="inline-flex items-center px-2 py-0.5 rounded bg-muted text-muted-foreground font-mono text-[10px] border border-border">{key}</kbd>
+                        <span className="text-muted-foreground">{desc}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Status bar */}
       <div className="flex items-center gap-3 px-3 py-1.5 border-t border-border text-[9px] font-mono text-muted-foreground">
         <span>{diagram.nodes.length} nodes</span>
         <span>{diagram.edges.length} edges</span>
         <span>{diagram.nodes.filter(n => n.type === "block").length} blocks</span>
         {selectedId && <span className="text-accent">Selected: {selectedId}</span>}
-        <span className="ml-auto">S/P/A modes · F fit · Ctrl+Z/Y undo/redo · Scroll zoom · Alt+drag pan</span>
+        <span className="ml-auto">? shortcuts · S/P/A modes · F fit · Ctrl+Z/Y undo/redo</span>
       </div>
     </div>
   );
