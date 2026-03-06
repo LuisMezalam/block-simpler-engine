@@ -840,7 +840,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     setZoom(scale);
     setPan({ x: rect.width / 2 - cx * scale, y: rect.height / 2 - cy * scale });
     toast("Fit to view");
-  }, [diagram.nodes]);
+  }, [diagram.nodes, toast]);
 
   // ─── Keyboard ────────────────────────────────────────────────────
 
