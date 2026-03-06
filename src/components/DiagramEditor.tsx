@@ -503,7 +503,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
   const [connectMode, setConnectMode] = useState<"auto" | "series" | "parallel">("auto");
   const [showPresets, setShowPresets] = useState(false);
   const [alignGuides, setAlignGuides] = useState<{ x?: number; y?: number }>({});
-  const { toast } = useToast();
+  
 
   // Zoom/Pan state
   const [zoom, setZoom] = useState(1);
