@@ -806,7 +806,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     setConnecting(null);
     setZoom(1);
     setPan({ x: 0, y: 0 });
-    if (name) toast({ title: `Loaded ${name} template` });
+    if (name) toast(`Loaded ${name} template`);
   }, [resetDiagram]);
 
   const fitToView = useCallback(() => {
@@ -833,7 +833,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     const cy = (minY + maxY) / 2;
     setZoom(scale);
     setPan({ x: rect.width / 2 - cx * scale, y: rect.height / 2 - cy * scale });
-    toast({ title: "Fit to view" });
+    toast("Fit to view");
   }, [diagram.nodes]);
 
   // ─── Keyboard ────────────────────────────────────────────────────
@@ -867,19 +867,19 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         e.preventDefault();
         setConnectMode("series");
         setTool("connect");
-        toast({ title: "Series connect mode" });
+        toast("Series connect mode");
       }
       if (e.key === "p" && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         setConnectMode("parallel");
         setTool("connect");
-        toast({ title: "Parallel connect mode" });
+        toast("Parallel connect mode");
       }
       if (e.key === "a" && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         setConnectMode("auto");
         setTool("connect");
-        toast({ title: "Auto connect mode" });
+        toast("Auto connect mode");
       }
       // Block preset shortcuts: 1-9 and 0 (maps to presets 1-10)
       if (!e.metaKey && !e.ctrlKey && !e.shiftKey) {
@@ -888,7 +888,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
           const idx = num === 0 ? 9 : num - 1; // 1-9 → index 0-8, 0 → index 9
           if (idx < BLOCK_PRESETS.length) {
             addBlockPreset(BLOCK_PRESETS[idx]);
-            toast({ title: `Added ${BLOCK_PRESETS[idx].label}` });
+            toast(`Added ${BLOCK_PRESETS[idx].label}`);
           }
         }
       }
