@@ -847,6 +847,12 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
+      // Cheatsheet toggle should work regardless of editing state
+      if (e.key === "?" || (e.shiftKey && e.key === "/")) {
+        e.preventDefault();
+        setShowCheatsheet(v => !v);
+        return;
+      }
       if (editingNodeId) return;
       // Don't capture shortcuts when typing in input/textarea
       const tag = (e.target as HTMLElement)?.tagName;
