@@ -910,11 +910,6 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         e.preventDefault();
         fitToView();
       }
-      // Cheatsheet
-      if (e.key === "?" || (e.shiftKey && e.key === "/")) {
-        e.preventDefault();
-        setShowCheatsheet(v => !v);
-      }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
