@@ -1237,13 +1237,25 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
               stroke="hsl(196,85%,50%)" strokeWidth={0.8} strokeDasharray="4 3" opacity={0.7}
             />
           )}
+          {/* Rubber band selection rect */}
+          {rubberBand && (
+            <rect
+              x={Math.min(rubberBand.startX, rubberBand.curX)}
+              y={Math.min(rubberBand.startY, rubberBand.curY)}
+              width={Math.abs(rubberBand.curX - rubberBand.startX)}
+              height={Math.abs(rubberBand.curY - rubberBand.startY)}
+              fill="hsl(196,85%,50%)" fillOpacity={0.08}
+              stroke="hsl(196,85%,50%)" strokeWidth={1} strokeDasharray="4 2"
+              pointerEvents="none"
+            />
+          )}
           {/* Edges */}
           {diagram.edges.map(edge => (
             <EdgeLine
               key={edge.id}
               edge={edge}
               nodes={diagram.nodes}
-              selected={selectedId === edge.id}
+              selected={selectedIds.has(edge.id)}
               onClick={() => {
                 if (tool === "delete") {
                   pushDiagram({
@@ -1251,7 +1263,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
                     edges: diagram.edges.filter(e => e.id !== edge.id),
                   });
                 } else {
-                  setSelectedId(edge.id);
+                  setSelectedIds(new Set([edge.id]));
                 }
               }}
             />
