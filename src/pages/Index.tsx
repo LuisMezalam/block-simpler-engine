@@ -188,7 +188,42 @@ function ResultPanel({ result, error }: { result: SolverResult | null; error: st
           </div>
         </div>
 
-        {/* Derivation accordion */}
+        {/* Stability Margins */}
+        {margins && (
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-secondary/50 rounded px-3 py-2">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Gain Margin</div>
+              <div className={cn(
+                "text-sm font-mono font-bold",
+                margins.gainMarginDb === Infinity ? "text-success" :
+                margins.gainMarginDb > 0 ? "text-success" : "text-destructive"
+              )}>
+                {margins.gainMarginDb === Infinity ? "∞ dB" : `${margins.gainMarginDb.toFixed(2)} dB`}
+              </div>
+              <div className="text-[9px] font-mono text-muted-foreground mt-0.5">
+                {margins.phaseCrossoverFreq !== null
+                  ? `ω_pc = ${margins.phaseCrossoverFreq.toFixed(3)} rad/s`
+                  : "No phase crossover"}
+              </div>
+            </div>
+            <div className="bg-secondary/50 rounded px-3 py-2">
+              <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Phase Margin</div>
+              <div className={cn(
+                "text-sm font-mono font-bold",
+                margins.phaseMarginDeg === Infinity ? "text-success" :
+                margins.phaseMarginDeg > 0 ? "text-success" : "text-destructive"
+              )}>
+                {margins.phaseMarginDeg === Infinity ? "∞°" : `${margins.phaseMarginDeg.toFixed(2)}°`}
+              </div>
+              <div className="text-[9px] font-mono text-muted-foreground mt-0.5">
+                {margins.gainCrossoverFreq !== null
+                  ? `ω_gc = ${margins.gainCrossoverFreq.toFixed(3)} rad/s`
+                  : "No gain crossover"}
+              </div>
+            </div>
+          </div>
+        )}
+
         <div>
           <button
             onClick={() => setShowDerivation(!showDerivation)}
