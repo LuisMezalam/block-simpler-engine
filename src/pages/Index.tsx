@@ -1,5 +1,6 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import { solve, SolverResult, ConnectionType, stabilityLabel } from "@/lib/solver";
+import { computeMargins, StabilityMargins } from "@/lib/margins";
 import { BlockDiagram } from "@/components/BlockDiagram";
 import { DiagramEditor } from "@/components/DiagramEditor";
 import { SanityLibrary } from "@/components/SanityLibrary";
