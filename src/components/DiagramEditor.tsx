@@ -896,7 +896,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
 
   const loadTemplate = useCallback((create: () => DiagramState, name?: string) => {
     resetDiagram(create());
-    setSelectedId(null);
+    setSelectedIds(new Set());
     setConnecting(null);
     setZoom(1);
     setPan({ x: 0, y: 0 });
