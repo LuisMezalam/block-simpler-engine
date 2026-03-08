@@ -949,7 +949,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         deleteSelected();
       }
       if (e.key === "Escape") {
-        setSelectedId(null);
+        setSelectedIds(new Set());
         setConnecting(null);
         setTool("select");
       }
