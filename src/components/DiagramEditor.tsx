@@ -570,7 +570,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
       tf: { ...preset.tf },
     };
     pushDiagram({ ...diagram, nodes: [...diagram.nodes, newNode] });
-    setSelectedId(id);
+    setSelectedIds(new Set([id]));
     setShowPresets(false);
   }, [diagram, pushDiagram]);
 
