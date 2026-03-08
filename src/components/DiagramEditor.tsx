@@ -1271,7 +1271,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
 
           {/* Nodes */}
           {diagram.nodes.map(node => {
-            const isSelected = selectedId === node.id;
+            const isSelected = selectedIds.has(node.id);
             const mouseDown = (e: React.MouseEvent) => handleNodeMouseDown(node.id, e);
 
             switch (node.type) {
