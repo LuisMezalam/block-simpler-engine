@@ -1634,6 +1634,9 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
             </div>
           );
         })()}
+
+        {/* Gain Tuner */}
+        <GainTuner diagram={diagram} onAnalyze={onAnalyze} />
       </div>
 
       {/* Inline toast notification */}
