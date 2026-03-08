@@ -1178,12 +1178,12 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         </div>
 
         {/* Delete selected */}
-        {selectedId && (
+        {selectedIds.size > 0 && (
           <button
             onClick={deleteSelected}
             className="px-2 py-1 text-[10px] font-mono text-destructive hover:bg-destructive/10 rounded border border-destructive/30 transition-all"
           >
-            🗑 Delete
+            🗑 Delete{selectedIds.size > 1 ? ` (${selectedIds.size})` : ""}
           </button>
         )}
 
