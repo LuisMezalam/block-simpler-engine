@@ -184,8 +184,8 @@ export function GainTuner({ diagram, onAnalyze }: GainTunerProps) {
 
             {/* Parameter sliders */}
             {params.map(param => {
-              const def = PARAM_DEFS[param] ?? { min: 0, max: 10, step: 0.1 };
-              const val = values[param] ?? def.default ?? 1;
+              const def = PARAM_DEFS[param] ?? { min: 0, max: 10, step: 0.1, default: 1 };
+              const val = values[param] ?? (def as any).default ?? 1;
               return (
                 <div key={param} className="space-y-0.5">
                   <div className="flex items-center justify-between">
