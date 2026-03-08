@@ -961,6 +961,56 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         toast(`Selected all ${diagram.nodes.length} nodes`);
         return;
       }
+      // Copy
+      if ((e.metaKey || e.ctrlKey) && e.key === "c") {
+        e.preventDefault();
+        const nodeIds = new Set([...selectedIds].filter(id => diagram.nodes.some(n => n.id === id)));
+        if (nodeIds.size === 0) return;
+        const copiedNodes = diagram.nodes.filter(n => nodeIds.has(n.id));
+        const copiedEdges = diagram.edges.filter(ed => nodeIds.has(ed.from) && nodeIds.has(ed.to));
+        clipboardRef.current = { nodes: copiedNodes, edges: copiedEdges };
+        toast(`Copied ${copiedNodes.length} node${copiedNodes.length > 1 ? "s" : ""}`);
+        return;
+      }
+      // Paste
+      if ((e.metaKey || e.ctrlKey) && e.key === "v") {
+        e.preventDefault();
+        const { nodes: srcNodes, edges: srcEdges } = clipboardRef.current;
+        if (srcNodes.length === 0) return;
+        const idMap = new Map<string, string>();
+        const newNodes: DiagramNode[] = srcNodes.map(n => {
+          const newId = genId(n.type[0]);
+          idMap.set(n.id, newId);
+          return { ...n, id: newId, x: n.x + 30, y: n.y + 30, ...(n.signs ? { signs: { ...n.signs } } : {}), ...(n.tf ? { tf: { ...n.tf } } : {}) };
+        });
+        // Remap edge IDs and node references
+        const newEdges: DiagramEdge[] = srcEdges.map(ed => {
+          const newEdgeId = genId("e");
+          const newFrom = idMap.get(ed.from) ?? ed.from;
+          const newTo = idMap.get(ed.to) ?? ed.to;
+          return { id: newEdgeId, from: newFrom, to: newTo };
+        });
+        // Remap sign keys on summing junctions
+        for (const node of newNodes) {
+          if (node.type === "summing" && node.signs) {
+            const remapped: Record<string, string> = {};
+            for (const [oldEdgeId, sign] of Object.entries(node.signs)) {
+              const srcEdge = srcEdges.find(e => e.id === oldEdgeId);
+              if (srcEdge) {
+                const newEdge = newEdges.find(ne => ne.from === idMap.get(srcEdge.from) && ne.to === idMap.get(srcEdge.to));
+                if (newEdge) remapped[newEdge.id] = sign;
+              }
+            }
+            node.signs = remapped;
+          }
+        }
+        pushDiagram({ nodes: [...diagram.nodes, ...newNodes], edges: [...diagram.edges, ...newEdges] });
+        setSelectedIds(new Set(newNodes.map(n => n.id)));
+        // Update clipboard offset for repeated paste
+        clipboardRef.current = { nodes: newNodes, edges: newEdges };
+        toast(`Pasted ${newNodes.length} node${newNodes.length > 1 ? "s" : ""}`);
+        return;
+      }
       // Undo/Redo
       if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
