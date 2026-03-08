@@ -644,31 +644,33 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
   }, [diagram, pushDiagram]);
 
   const deleteSelected = useCallback(() => {
-    if (!selectedId) return;
-    const isEdge = diagram.edges.some(e => e.id === selectedId);
-    if (isEdge) {
-      // Clean up sign entries on summing junctions when deleting an edge
-      const updatedNodes = diagram.nodes.map(n => {
-        if (n.type === "summing" && n.signs?.[selectedId]) {
-          const { [selectedId]: _, ...rest } = n.signs;
-          return { ...n, signs: rest };
-        }
-        return n;
+    if (selectedIds.size === 0) return;
+    const edgeIds = new Set(diagram.edges.filter(e => selectedIds.has(e.id)).map(e => e.id));
+    const nodeIds = new Set([...selectedIds].filter(id => !edgeIds.has(id)));
+
+    let updatedNodes = diagram.nodes;
+    let updatedEdges = diagram.edges;
+
+    // Remove selected edges and clean signs
+    if (edgeIds.size > 0) {
+      updatedNodes = updatedNodes.map(n => {
+        if (n.type !== "summing" || !n.signs) return n;
+        const cleaned = { ...n.signs };
+        edgeIds.forEach(eid => { delete cleaned[eid]; });
+        return { ...n, signs: cleaned };
       });
-      pushDiagram({
-        ...diagram,
-        nodes: updatedNodes,
-        edges: diagram.edges.filter(e => e.id !== selectedId),
-      });
-    } else {
-      pushDiagram({
-        ...diagram,
-        nodes: diagram.nodes.filter(n => n.id !== selectedId),
-        edges: diagram.edges.filter(e => e.from !== selectedId && e.to !== selectedId),
-      });
+      updatedEdges = updatedEdges.filter(e => !edgeIds.has(e.id));
     }
-    setSelectedId(null);
-  }, [selectedId, diagram, pushDiagram]);
+
+    // Remove selected nodes and their connected edges
+    if (nodeIds.size > 0) {
+      updatedNodes = updatedNodes.filter(n => !nodeIds.has(n.id));
+      updatedEdges = updatedEdges.filter(e => !nodeIds.has(e.from) && !nodeIds.has(e.to));
+    }
+
+    pushDiagram({ ...diagram, nodes: updatedNodes, edges: updatedEdges });
+    setSelectedIds(new Set());
+  }, [selectedIds, diagram, pushDiagram]);
 
   const getSvgPoint = useCallback((clientX: number, clientY: number) => {
     if (!svgRef.current) return { x: 0, y: 0 };
