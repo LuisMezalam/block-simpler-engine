@@ -1639,6 +1639,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
             <div className="px-5 py-4 space-y-4 text-xs">
               {[
                 { title: "General", items: [["Esc", "Deselect / cancel"], ["Del / Backspace", "Delete selected"], ["?", "Toggle this cheatsheet"]] },
+                { title: "Editing", items: [["Ctrl+A", "Select all"], ["Ctrl+C", "Copy"], ["Ctrl+V", "Paste"], ["Ctrl+D", "Duplicate selected"]] },
                 { title: "History", items: [["Ctrl+Z", "Undo"], ["Ctrl+Y / Ctrl+Shift+Z", "Redo"]] },
                 { title: "Connect Modes", items: [["S", "Series mode"], ["P", "Parallel mode"], ["A", "Auto mode"]] },
                 { title: "Navigation", items: [["F", "Fit to view"], ["Scroll", "Zoom in/out"], ["Alt+Drag", "Pan canvas"]] },
