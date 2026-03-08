@@ -1507,6 +1507,16 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
 
         {/* Minimap */}
         {diagram.nodes.length > 0 && (() => {
+          const minimapPanTo = (clientX: number, clientY: number, containerEl: HTMLElement) => {
+            const rect = containerEl.getBoundingClientRect();
+            const clickX = clientX - rect.left;
+            const clickY = clientY - rect.top;
+            const diagramX = clickX / scale + minX;
+            const diagramY = clickY / scale + minY;
+            const newPanX = -(diagramX - vpW / 2) * zoom;
+            const newPanY = -(diagramY - vpH / 2) * zoom;
+            setPan({ x: newPanX, y: newPanY });
+          };
           const MINIMAP_W = 160;
           const MINIMAP_H = 100;
           const PAD = 30;
