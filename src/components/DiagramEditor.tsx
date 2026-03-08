@@ -931,6 +931,96 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     toast("Fit to view");
   }, [diagram.nodes, toast]);
 
+  // ─── Export ─────────────────────────────────────────────────────
+
+  const exportDiagram = useCallback((format: "png" | "svg") => {
+    const svgEl = svgRef.current;
+    if (!svgEl) return;
+
+    // Clone the SVG
+    const clone = svgEl.cloneNode(true) as SVGSVGElement;
+
+    // Compute bounding box of content
+    const PAD = 30;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const n of diagram.nodes) {
+      const x1 = n.type === "block" ? n.x : n.x - JUNCTION_R;
+      const y1 = n.type === "block" ? n.y : n.y - JUNCTION_R;
+      const x2 = n.type === "block" ? n.x + BLOCK_W : n.x + JUNCTION_R;
+      const y2 = n.type === "block" ? n.y + BLOCK_H : n.y + JUNCTION_R;
+      minX = Math.min(minX, x1);
+      minY = Math.min(minY, y1);
+      maxX = Math.max(maxX, x2);
+      maxY = Math.max(maxY, y2);
+    }
+    if (!isFinite(minX)) { toast("Nothing to export"); return; }
+
+    const vbX = minX - PAD;
+    const vbY = minY - PAD;
+    const vbW = maxX - minX + PAD * 2;
+    const vbH = maxY - minY + PAD * 2;
+
+    clone.setAttribute("viewBox", `${vbX} ${vbY} ${vbW} ${vbH}`);
+    clone.setAttribute("width", String(vbW * 2));
+    clone.setAttribute("height", String(vbH * 2));
+    clone.style.background = "hsl(220,18%,10%)";
+
+    // Remove the grid background rect (first rect with fill="url(#grid)")
+    const gridRect = clone.querySelector('rect[fill="url(#grid)"]');
+    if (gridRect) {
+      // Replace with a solid background
+      gridRect.setAttribute("x", String(vbX));
+      gridRect.setAttribute("y", String(vbY));
+      gridRect.setAttribute("width", String(vbW));
+      gridRect.setAttribute("height", String(vbH));
+      gridRect.setAttribute("fill", "hsl(220,18%,10%)");
+    }
+
+    // Remove alignment guides and rubber band
+    clone.querySelectorAll('[stroke-dasharray]').forEach(el => el.remove());
+
+    const svgData = new XMLSerializer().serializeToString(clone);
+    const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
+
+    if (format === "svg") {
+      const url = URL.createObjectURL(svgBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "diagram.svg";
+      a.click();
+      URL.revokeObjectURL(url);
+      toast("Exported as SVG");
+      return;
+    }
+
+    // PNG export
+    const img = new Image();
+    const url = URL.createObjectURL(svgBlob);
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = vbW * 2;
+      canvas.height = vbH * 2;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.fillStyle = "hsl(220,18%,10%)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+
+      canvas.toBlob(blob => {
+        if (!blob) return;
+        const pngUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = pngUrl;
+        a.download = "diagram.png";
+        a.click();
+        URL.revokeObjectURL(pngUrl);
+        toast("Exported as PNG");
+      }, "image/png");
+    };
+    img.src = url;
+  }, [diagram.nodes, toast]);
+
   // ─── Keyboard ────────────────────────────────────────────────────
 
   useEffect(() => {
