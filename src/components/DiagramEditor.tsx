@@ -496,8 +496,10 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     canUndo, canRedo,
   } = useHistory(createSeriesTemplate());
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
+  const [rubberBand, setRubberBand] = useState<{ startX: number; startY: number; curX: number; curY: number } | null>(null);
+  const rubberBandRef = useRef<{ startX: number; startY: number } | null>(null);
   const [connecting, setConnecting] = useState<{ fromId: string } | null>(null);
   const [tool, setTool] = useState<"select" | "connect" | "delete">("select");
   const [connectMode, setConnectMode] = useState<"auto" | "series" | "parallel">("auto");
@@ -555,7 +557,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
       ...(type === "summing" ? { signs: {} } : {}),
     };
     pushDiagram({ ...diagram, nodes: [...diagram.nodes, newNode] });
-    setSelectedId(id);
+    setSelectedIds(new Set([id]));
   }, [diagram, pushDiagram]);
 
   const addBlockPreset = useCallback((preset: typeof BLOCK_PRESETS[number]) => {
@@ -568,7 +570,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
       tf: { ...preset.tf },
     };
     pushDiagram({ ...diagram, nodes: [...diagram.nodes, newNode] });
-    setSelectedId(id);
+    setSelectedIds(new Set([id]));
     setShowPresets(false);
   }, [diagram, pushDiagram]);
 
@@ -642,31 +644,33 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
   }, [diagram, pushDiagram]);
 
   const deleteSelected = useCallback(() => {
-    if (!selectedId) return;
-    const isEdge = diagram.edges.some(e => e.id === selectedId);
-    if (isEdge) {
-      // Clean up sign entries on summing junctions when deleting an edge
-      const updatedNodes = diagram.nodes.map(n => {
-        if (n.type === "summing" && n.signs?.[selectedId]) {
-          const { [selectedId]: _, ...rest } = n.signs;
-          return { ...n, signs: rest };
-        }
-        return n;
+    if (selectedIds.size === 0) return;
+    const edgeIds = new Set(diagram.edges.filter(e => selectedIds.has(e.id)).map(e => e.id));
+    const nodeIds = new Set([...selectedIds].filter(id => !edgeIds.has(id)));
+
+    let updatedNodes = diagram.nodes;
+    let updatedEdges = diagram.edges;
+
+    // Remove selected edges and clean signs
+    if (edgeIds.size > 0) {
+      updatedNodes = updatedNodes.map(n => {
+        if (n.type !== "summing" || !n.signs) return n;
+        const cleaned = { ...n.signs };
+        edgeIds.forEach(eid => { delete cleaned[eid]; });
+        return { ...n, signs: cleaned };
       });
-      pushDiagram({
-        ...diagram,
-        nodes: updatedNodes,
-        edges: diagram.edges.filter(e => e.id !== selectedId),
-      });
-    } else {
-      pushDiagram({
-        ...diagram,
-        nodes: diagram.nodes.filter(n => n.id !== selectedId),
-        edges: diagram.edges.filter(e => e.from !== selectedId && e.to !== selectedId),
-      });
+      updatedEdges = updatedEdges.filter(e => !edgeIds.has(e.id));
     }
-    setSelectedId(null);
-  }, [selectedId, diagram, pushDiagram]);
+
+    // Remove selected nodes and their connected edges
+    if (nodeIds.size > 0) {
+      updatedNodes = updatedNodes.filter(n => !nodeIds.has(n.id));
+      updatedEdges = updatedEdges.filter(e => !nodeIds.has(e.from) && !nodeIds.has(e.to));
+    }
+
+    pushDiagram({ ...diagram, nodes: updatedNodes, edges: updatedEdges });
+    setSelectedIds(new Set());
+  }, [selectedIds, diagram, pushDiagram]);
 
   const getSvgPoint = useCallback((clientX: number, clientY: number) => {
     if (!svgRef.current) return { x: 0, y: 0 };
@@ -680,16 +684,28 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
   const handleSvgMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.target === svgRef.current || (e.target as Element).tagName === "rect" && (e.target as Element).getAttribute("fill") === "url(#grid)") {
       if (e.button === 1 || (e.button === 0 && e.altKey)) {
-        // Middle click or Alt+click to pan
         isPanning.current = true;
         panStart.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
         e.preventDefault();
         return;
       }
-      setSelectedId(null);
+      // Start rubber band selection
+      if (tool === "select" && e.button === 0) {
+        const pt = getSvgPoint(e.clientX, e.clientY);
+        rubberBandRef.current = { startX: pt.x, startY: pt.y };
+        setRubberBand({ startX: pt.x, startY: pt.y, curX: pt.x, curY: pt.y });
+        if (!e.shiftKey) {
+          setSelectedIds(new Set());
+        }
+      } else {
+        setSelectedIds(new Set());
+      }
       setShowPresets(false);
     }
-  }, [pan]);
+  }, [pan, tool, getSvgPoint]);
+
+  // Multi-drag offsets for all selected nodes
+  const multiDragOffsetsRef = useRef<Map<string, { offsetX: number; offsetY: number }>>(new Map());
 
   const handleNodeMouseDown = useCallback((nodeId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -715,18 +731,35 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
       return;
     }
 
-    setSelectedId(nodeId);
+    // Shift+click toggles selection
+    if (e.shiftKey) {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        if (next.has(nodeId)) next.delete(nodeId);
+        else next.add(nodeId);
+        return next;
+      });
+    } else if (!selectedIds.has(nodeId)) {
+      setSelectedIds(new Set([nodeId]));
+    }
 
     const { x: svgX, y: svgY } = getSvgPoint(e.clientX, e.clientY);
-    const node = diagram.nodes.find(n => n.id === nodeId);
-    if (!node) return;
+
+    // Build offsets for all nodes that will be dragged
+    const dragSet = selectedIds.has(nodeId) ? selectedIds : new Set([nodeId]);
+    const offsets = new Map<string, { offsetX: number; offsetY: number }>();
+    for (const id of dragSet) {
+      const n = diagram.nodes.find(nd => nd.id === id);
+      if (n) offsets.set(id, { offsetX: svgX - n.x, offsetY: svgY - n.y });
+    }
+    multiDragOffsetsRef.current = offsets;
 
     draggingRef.current = {
       nodeId,
-      offsetX: svgX - node.x,
-      offsetY: svgY - node.y,
+      offsetX: svgX - (diagram.nodes.find(n => n.id === nodeId)?.x ?? 0),
+      offsetY: svgY - (diagram.nodes.find(n => n.id === nodeId)?.y ?? 0),
     };
-  }, [tool, connecting, diagram, pushDiagram, getSvgPoint]);
+  }, [tool, connecting, diagram, pushDiagram, getSvgPoint, selectedIds, smartConnect]);
 
   useEffect(() => {
     const ALIGN_THRESHOLD = 8;
@@ -738,8 +771,36 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         });
         return;
       }
+
+      // Rubber band update
+      if (rubberBandRef.current && !draggingRef.current) {
+        const pt = getSvgPoint(e.clientX, e.clientY);
+        setRubberBand({
+          startX: rubberBandRef.current.startX,
+          startY: rubberBandRef.current.startY,
+          curX: pt.x,
+          curY: pt.y,
+        });
+        return;
+      }
+
       if (!draggingRef.current || !svgRef.current) return;
       const { x, y } = getSvgPoint(e.clientX, e.clientY);
+
+      // Multi-drag: move all selected nodes
+      if (multiDragOffsetsRef.current.size > 1) {
+        const updates: Record<string, { x: number; y: number }> = {};
+        for (const [id, off] of multiDragOffsetsRef.current) {
+          updates[id] = { x: snap(x - off.offsetX), y: snap(y - off.offsetY) };
+        }
+        pushDiagram({
+          ...diagram,
+          nodes: diagram.nodes.map(n => updates[n.id] ? { ...n, ...updates[n.id] } : n),
+        });
+        setAlignGuides({});
+        return;
+      }
+
       const nx = snap(x - draggingRef.current.offsetX);
       const ny = snap(y - draggingRef.current.offsetY);
 
@@ -764,8 +825,34 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     };
 
     const handleMouseUp = () => {
+      // Finalize rubber band selection
+      if (rubberBandRef.current && rubberBand) {
+        const x1 = Math.min(rubberBand.startX, rubberBand.curX);
+        const y1 = Math.min(rubberBand.startY, rubberBand.curY);
+        const x2 = Math.max(rubberBand.startX, rubberBand.curX);
+        const y2 = Math.max(rubberBand.startY, rubberBand.curY);
+        // Only select if rectangle is meaningful (not just a click)
+        if (Math.abs(x2 - x1) > 5 || Math.abs(y2 - y1) > 5) {
+          const hits = new Set<string>();
+          for (const n of diagram.nodes) {
+            const cx = n.type === "block" ? n.x + BLOCK_W / 2 : n.x;
+            const cy = n.type === "block" ? n.y + BLOCK_H / 2 : n.y;
+            if (cx >= x1 && cx <= x2 && cy >= y1 && cy <= y2) {
+              hits.add(n.id);
+            }
+          }
+          setSelectedIds(prev => {
+            const next = new Set(prev);
+            hits.forEach(id => next.add(id));
+            return next;
+          });
+        }
+      }
+      rubberBandRef.current = null;
+      setRubberBand(null);
       isPanning.current = false;
       draggingRef.current = null;
+      multiDragOffsetsRef.current = new Map();
       setAlignGuides({});
     };
 
@@ -775,7 +862,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [updateNode, getSvgPoint, diagram.nodes]);
+  }, [updateNode, getSvgPoint, diagram.nodes, diagram, pushDiagram, rubberBand]);
 
   // Wheel zoom
   useEffect(() => {
@@ -809,7 +896,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
 
   const loadTemplate = useCallback((create: () => DiagramState, name?: string) => {
     resetDiagram(create());
-    setSelectedId(null);
+    setSelectedIds(new Set());
     setConnecting(null);
     setZoom(1);
     setPan({ x: 0, y: 0 });
@@ -862,7 +949,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         deleteSelected();
       }
       if (e.key === "Escape") {
-        setSelectedId(null);
+        setSelectedIds(new Set());
         setConnecting(null);
         setTool("select");
       }
@@ -1091,12 +1178,12 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         </div>
 
         {/* Delete selected */}
-        {selectedId && (
+        {selectedIds.size > 0 && (
           <button
             onClick={deleteSelected}
             className="px-2 py-1 text-[10px] font-mono text-destructive hover:bg-destructive/10 rounded border border-destructive/30 transition-all"
           >
-            🗑 Delete
+            🗑 Delete{selectedIds.size > 1 ? ` (${selectedIds.size})` : ""}
           </button>
         )}
 
@@ -1150,13 +1237,25 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
               stroke="hsl(196,85%,50%)" strokeWidth={0.8} strokeDasharray="4 3" opacity={0.7}
             />
           )}
+          {/* Rubber band selection rect */}
+          {rubberBand && (
+            <rect
+              x={Math.min(rubberBand.startX, rubberBand.curX)}
+              y={Math.min(rubberBand.startY, rubberBand.curY)}
+              width={Math.abs(rubberBand.curX - rubberBand.startX)}
+              height={Math.abs(rubberBand.curY - rubberBand.startY)}
+              fill="hsl(196,85%,50%)" fillOpacity={0.08}
+              stroke="hsl(196,85%,50%)" strokeWidth={1} strokeDasharray="4 2"
+              pointerEvents="none"
+            />
+          )}
           {/* Edges */}
           {diagram.edges.map(edge => (
             <EdgeLine
               key={edge.id}
               edge={edge}
               nodes={diagram.nodes}
-              selected={selectedId === edge.id}
+              selected={selectedIds.has(edge.id)}
               onClick={() => {
                 if (tool === "delete") {
                   pushDiagram({
@@ -1164,7 +1263,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
                     edges: diagram.edges.filter(e => e.id !== edge.id),
                   });
                 } else {
-                  setSelectedId(edge.id);
+                  setSelectedIds(new Set([edge.id]));
                 }
               }}
             />
@@ -1172,7 +1271,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
 
           {/* Nodes */}
           {diagram.nodes.map(node => {
-            const isSelected = selectedId === node.id;
+            const isSelected = selectedIds.has(node.id);
             const mouseDown = (e: React.MouseEvent) => handleNodeMouseDown(node.id, e);
 
             switch (node.type) {
@@ -1251,7 +1350,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         <span>{diagram.nodes.length} nodes</span>
         <span>{diagram.edges.length} edges</span>
         <span>{diagram.nodes.filter(n => n.type === "block").length} blocks</span>
-        {selectedId && <span className="text-accent">Selected: {selectedId}</span>}
+        {selectedIds.size > 0 && <span className="text-accent">Selected: {selectedIds.size} item{selectedIds.size > 1 ? "s" : ""}</span>}
         <span className="ml-auto">? shortcuts · S/P/A modes · F fit · Ctrl+Z/Y undo/redo</span>
       </div>
     </div>
