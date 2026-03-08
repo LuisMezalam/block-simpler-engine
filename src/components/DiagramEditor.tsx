@@ -557,7 +557,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
       ...(type === "summing" ? { signs: {} } : {}),
     };
     pushDiagram({ ...diagram, nodes: [...diagram.nodes, newNode] });
-    setSelectedId(id);
+    setSelectedIds(new Set([id]));
   }, [diagram, pushDiagram]);
 
   const addBlockPreset = useCallback((preset: typeof BLOCK_PRESETS[number]) => {
