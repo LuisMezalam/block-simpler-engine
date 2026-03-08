@@ -496,8 +496,10 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     canUndo, canRedo,
   } = useHistory(createSeriesTemplate());
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
+  const [rubberBand, setRubberBand] = useState<{ startX: number; startY: number; curX: number; curY: number } | null>(null);
+  const rubberBandRef = useRef<{ startX: number; startY: number } | null>(null);
   const [connecting, setConnecting] = useState<{ fromId: string } | null>(null);
   const [tool, setTool] = useState<"select" | "connect" | "delete">("select");
   const [connectMode, setConnectMode] = useState<"auto" | "series" | "parallel">("auto");
