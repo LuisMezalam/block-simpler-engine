@@ -993,7 +993,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         // Remap sign keys on summing junctions
         for (const node of newNodes) {
           if (node.type === "summing" && node.signs) {
-            const remapped: Record<string, string> = {};
+            const remapped: Record<string, "+" | "-"> = {};
             for (const [oldEdgeId, sign] of Object.entries(node.signs)) {
               const srcEdge = srcEdges.find(e => e.id === oldEdgeId);
               if (srcEdge) {
