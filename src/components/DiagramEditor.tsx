@@ -704,6 +704,9 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     }
   }, [pan, tool, getSvgPoint]);
 
+  // Multi-drag offsets for all selected nodes
+  const multiDragOffsetsRef = useRef<Map<string, { offsetX: number; offsetY: number }>>(new Map());
+
   const handleNodeMouseDown = useCallback((nodeId: string, e: React.MouseEvent) => {
     e.stopPropagation();
 
@@ -728,18 +731,35 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
       return;
     }
 
-    setSelectedId(nodeId);
+    // Shift+click toggles selection
+    if (e.shiftKey) {
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        if (next.has(nodeId)) next.delete(nodeId);
+        else next.add(nodeId);
+        return next;
+      });
+    } else if (!selectedIds.has(nodeId)) {
+      setSelectedIds(new Set([nodeId]));
+    }
 
     const { x: svgX, y: svgY } = getSvgPoint(e.clientX, e.clientY);
-    const node = diagram.nodes.find(n => n.id === nodeId);
-    if (!node) return;
+
+    // Build offsets for all nodes that will be dragged
+    const dragSet = selectedIds.has(nodeId) ? selectedIds : new Set([nodeId]);
+    const offsets = new Map<string, { offsetX: number; offsetY: number }>();
+    for (const id of dragSet) {
+      const n = diagram.nodes.find(nd => nd.id === id);
+      if (n) offsets.set(id, { offsetX: svgX - n.x, offsetY: svgY - n.y });
+    }
+    multiDragOffsetsRef.current = offsets;
 
     draggingRef.current = {
       nodeId,
-      offsetX: svgX - node.x,
-      offsetY: svgY - node.y,
+      offsetX: svgX - (diagram.nodes.find(n => n.id === nodeId)?.x ?? 0),
+      offsetY: svgY - (diagram.nodes.find(n => n.id === nodeId)?.y ?? 0),
     };
-  }, [tool, connecting, diagram, pushDiagram, getSvgPoint]);
+  }, [tool, connecting, diagram, pushDiagram, getSvgPoint, selectedIds, smartConnect]);
 
   useEffect(() => {
     const ALIGN_THRESHOLD = 8;
