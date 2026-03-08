@@ -1551,16 +1551,20 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
             <div
               className="absolute bottom-2 right-2 z-30 rounded border border-border/60 bg-background/80 backdrop-blur-sm shadow-lg overflow-hidden cursor-pointer"
               style={{ width: MINIMAP_W, height: MINIMAP_H }}
-              onClick={(e) => {
-                const rect = e.currentTarget.getBoundingClientRect();
-                const clickX = e.clientX - rect.left;
-                const clickY = e.clientY - rect.top;
-                // Convert minimap click to diagram coords, centering viewport there
-                const diagramX = clickX / scale + minX;
-                const diagramY = clickY / scale + minY;
-                const newPanX = -(diagramX - vpW / 2) * zoom;
-                const newPanY = -(diagramY - vpH / 2) * zoom;
-                setPan({ x: newPanX, y: newPanY });
+              onMouseDown={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const container = e.currentTarget;
+                minimapPanTo(e.clientX, e.clientY, container);
+                const onMove = (ev: MouseEvent) => {
+                  minimapPanTo(ev.clientX, ev.clientY, container);
+                };
+                const onUp = () => {
+                  window.removeEventListener("mousemove", onMove);
+                  window.removeEventListener("mouseup", onUp);
+                };
+                window.addEventListener("mousemove", onMove);
+                window.addEventListener("mouseup", onUp);
               }}
             >
               <svg width={MINIMAP_W} height={MINIMAP_H}>
