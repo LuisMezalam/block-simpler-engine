@@ -771,8 +771,36 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         });
         return;
       }
+
+      // Rubber band update
+      if (rubberBandRef.current && !draggingRef.current) {
+        const pt = getSvgPoint(e.clientX, e.clientY);
+        setRubberBand({
+          startX: rubberBandRef.current.startX,
+          startY: rubberBandRef.current.startY,
+          curX: pt.x,
+          curY: pt.y,
+        });
+        return;
+      }
+
       if (!draggingRef.current || !svgRef.current) return;
       const { x, y } = getSvgPoint(e.clientX, e.clientY);
+
+      // Multi-drag: move all selected nodes
+      if (multiDragOffsetsRef.current.size > 1) {
+        const updates: Record<string, { x: number; y: number }> = {};
+        for (const [id, off] of multiDragOffsetsRef.current) {
+          updates[id] = { x: snap(x - off.offsetX), y: snap(y - off.offsetY) };
+        }
+        pushDiagram({
+          ...diagram,
+          nodes: diagram.nodes.map(n => updates[n.id] ? { ...n, ...updates[n.id] } : n),
+        });
+        setAlignGuides({});
+        return;
+      }
+
       const nx = snap(x - draggingRef.current.offsetX);
       const ny = snap(y - draggingRef.current.offsetY);
 
@@ -797,8 +825,34 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     };
 
     const handleMouseUp = () => {
+      // Finalize rubber band selection
+      if (rubberBandRef.current && rubberBand) {
+        const x1 = Math.min(rubberBand.startX, rubberBand.curX);
+        const y1 = Math.min(rubberBand.startY, rubberBand.curY);
+        const x2 = Math.max(rubberBand.startX, rubberBand.curX);
+        const y2 = Math.max(rubberBand.startY, rubberBand.curY);
+        // Only select if rectangle is meaningful (not just a click)
+        if (Math.abs(x2 - x1) > 5 || Math.abs(y2 - y1) > 5) {
+          const hits = new Set<string>();
+          for (const n of diagram.nodes) {
+            const cx = n.type === "block" ? n.x + BLOCK_W / 2 : n.x;
+            const cy = n.type === "block" ? n.y + BLOCK_H / 2 : n.y;
+            if (cx >= x1 && cx <= x2 && cy >= y1 && cy <= y2) {
+              hits.add(n.id);
+            }
+          }
+          setSelectedIds(prev => {
+            const next = new Set(prev);
+            hits.forEach(id => next.add(id));
+            return next;
+          });
+        }
+      }
+      rubberBandRef.current = null;
+      setRubberBand(null);
       isPanning.current = false;
       draggingRef.current = null;
+      multiDragOffsetsRef.current = new Map();
       setAlignGuides({});
     };
 
@@ -808,7 +862,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [updateNode, getSvgPoint, diagram.nodes]);
+  }, [updateNode, getSvgPoint, diagram.nodes, diagram, pushDiagram, rubberBand]);
 
   // Wheel zoom
   useEffect(() => {
