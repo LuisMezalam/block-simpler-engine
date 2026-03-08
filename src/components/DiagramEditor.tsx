@@ -953,6 +953,13 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         setConnecting(null);
         setTool("select");
       }
+      // Select All
+      if ((e.metaKey || e.ctrlKey) && e.key === "a") {
+        e.preventDefault();
+        setSelectedIds(new Set(diagram.nodes.map(n => n.id)));
+        toast(`Selected all ${diagram.nodes.length} nodes`);
+        return;
+      }
       // Undo/Redo
       if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
