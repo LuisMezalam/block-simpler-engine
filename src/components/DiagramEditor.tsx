@@ -1350,7 +1350,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         <span>{diagram.nodes.length} nodes</span>
         <span>{diagram.edges.length} edges</span>
         <span>{diagram.nodes.filter(n => n.type === "block").length} blocks</span>
-        {selectedId && <span className="text-accent">Selected: {selectedId}</span>}
+        {selectedIds.size > 0 && <span className="text-accent">Selected: {selectedIds.size} item{selectedIds.size > 1 ? "s" : ""}</span>}
         <span className="ml-auto">? shortcuts · S/P/A modes · F fit · Ctrl+Z/Y undo/redo</span>
       </div>
     </div>
