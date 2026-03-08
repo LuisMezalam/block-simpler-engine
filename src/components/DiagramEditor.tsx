@@ -506,6 +506,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
   const [showPresets, setShowPresets] = useState(false);
   const [alignGuides, setAlignGuides] = useState<{ x?: number; y?: number }>({});
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+  const clipboardRef = useRef<{ nodes: DiagramNode[]; edges: DiagramEdge[] }>({ nodes: [], edges: [] });
   const [showCheatsheet, setShowCheatsheet] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout>>();
   const toast = useCallback((msg: string) => {
