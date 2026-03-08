@@ -1101,6 +1101,41 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
         toast(`Pasted ${newNodes.length} node${newNodes.length > 1 ? "s" : ""}`);
         return;
       }
+      // Duplicate (Ctrl+D) — copy+paste selected in one step
+      if ((e.metaKey || e.ctrlKey) && e.key === "d") {
+        e.preventDefault();
+        const nodeIds = new Set([...selectedIds].filter(id => diagram.nodes.some(n => n.id === id)));
+        if (nodeIds.size === 0) return;
+        const srcNodes = diagram.nodes.filter(n => nodeIds.has(n.id));
+        const srcEdges = diagram.edges.filter(ed => nodeIds.has(ed.from) && nodeIds.has(ed.to));
+        const idMap = new Map<string, string>();
+        const newNodes: DiagramNode[] = srcNodes.map(n => {
+          const newId = genId(n.type[0]);
+          idMap.set(n.id, newId);
+          return { ...n, id: newId, x: n.x + 30, y: n.y + 30, ...(n.signs ? { signs: { ...n.signs } } : {}), ...(n.tf ? { tf: { ...n.tf } } : {}) };
+        });
+        const newEdges: DiagramEdge[] = srcEdges.map(ed => {
+          const newEdgeId = genId("e");
+          return { id: newEdgeId, from: idMap.get(ed.from) ?? ed.from, to: idMap.get(ed.to) ?? ed.to };
+        });
+        for (const node of newNodes) {
+          if (node.type === "summing" && node.signs) {
+            const remapped: Record<string, "+" | "-"> = {};
+            for (const [oldEdgeId, sign] of Object.entries(node.signs)) {
+              const srcEdge = srcEdges.find(e => e.id === oldEdgeId);
+              if (srcEdge) {
+                const newEdge = newEdges.find(ne => ne.from === idMap.get(srcEdge.from) && ne.to === idMap.get(srcEdge.to));
+                if (newEdge) remapped[newEdge.id] = sign;
+              }
+            }
+            node.signs = remapped;
+          }
+        }
+        pushDiagram({ nodes: [...diagram.nodes, ...newNodes], edges: [...diagram.edges, ...newEdges] });
+        setSelectedIds(new Set(newNodes.map(n => n.id)));
+        toast(`Duplicated ${newNodes.length} node${newNodes.length > 1 ? "s" : ""}`);
+        return;
+      }
       // Undo/Redo
       if ((e.metaKey || e.ctrlKey) && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
@@ -1604,6 +1639,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
             <div className="px-5 py-4 space-y-4 text-xs">
               {[
                 { title: "General", items: [["Esc", "Deselect / cancel"], ["Del / Backspace", "Delete selected"], ["?", "Toggle this cheatsheet"]] },
+                { title: "Editing", items: [["Ctrl+A", "Select all"], ["Ctrl+C", "Copy"], ["Ctrl+V", "Paste"], ["Ctrl+D", "Duplicate selected"]] },
                 { title: "History", items: [["Ctrl+Z", "Undo"], ["Ctrl+Y / Ctrl+Shift+Z", "Redo"]] },
                 { title: "Connect Modes", items: [["S", "Series mode"], ["P", "Parallel mode"], ["A", "Auto mode"]] },
                 { title: "Navigation", items: [["F", "Fit to view"], ["Scroll", "Zoom in/out"], ["Alt+Drag", "Pan canvas"]] },
