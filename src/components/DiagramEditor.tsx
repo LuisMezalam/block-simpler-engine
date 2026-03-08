@@ -684,16 +684,25 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
   const handleSvgMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.target === svgRef.current || (e.target as Element).tagName === "rect" && (e.target as Element).getAttribute("fill") === "url(#grid)") {
       if (e.button === 1 || (e.button === 0 && e.altKey)) {
-        // Middle click or Alt+click to pan
         isPanning.current = true;
         panStart.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
         e.preventDefault();
         return;
       }
-      setSelectedId(null);
+      // Start rubber band selection
+      if (tool === "select" && e.button === 0) {
+        const pt = getSvgPoint(e.clientX, e.clientY);
+        rubberBandRef.current = { startX: pt.x, startY: pt.y };
+        setRubberBand({ startX: pt.x, startY: pt.y, curX: pt.x, curY: pt.y });
+        if (!e.shiftKey) {
+          setSelectedIds(new Set());
+        }
+      } else {
+        setSelectedIds(new Set());
+      }
       setShowPresets(false);
     }
-  }, [pan]);
+  }, [pan, tool, getSvgPoint]);
 
   const handleNodeMouseDown = useCallback((nodeId: string, e: React.MouseEvent) => {
     e.stopPropagation();
