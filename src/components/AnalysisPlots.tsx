@@ -168,17 +168,14 @@ function StepResponsePlot({ result }: { result: SolverResult }) {
 function BodePlot({ result }: { result: SolverResult }) {
   const data = useMemo(() => {
     const { num, den } = result.equivalentTF;
-    const points: { w: number; wLog: number; mag: number }[] = [];
+    const points: { w: number; wLog: number; mag: number; phase: number }[] = [];
 
     for (let exp = -2; exp <= 3; exp += 0.05) {
       const w = Math.pow(10, exp);
-      // G(jw): evaluate num and den at s = jw
-      // num(jw) = sum c_k * (jw)^k
       let numRe = 0, numIm = 0;
       for (let k = 0; k < num.coeffs.length; k++) {
         const c = num.coeffs[k];
         const wk = Math.pow(w, k);
-        // (j)^k: 0->1, 1->j, 2->-1, 3->-j
         switch (k % 4) {
           case 0: numRe += c * wk; break;
           case 1: numIm += c * wk; break;
@@ -201,22 +198,44 @@ function BodePlot({ result }: { result: SolverResult }) {
       const denMag = Math.sqrt(denRe * denRe + denIm * denIm);
       const magDb = 20 * Math.log10(numMag / (denMag || 1e-30));
 
-      points.push({ w, wLog: parseFloat(exp.toFixed(2)), mag: parseFloat(magDb.toFixed(2)) });
+      // Phase: ∠G(jω) = ∠num(jω) - ∠den(jω)
+      const numPhase = Math.atan2(numIm, numRe);
+      const denPhase = Math.atan2(denIm, denRe);
+      const phaseDeg = (numPhase - denPhase) * (180 / Math.PI);
+
+      points.push({
+        w,
+        wLog: parseFloat(exp.toFixed(2)),
+        mag: parseFloat(magDb.toFixed(2)),
+        phase: parseFloat(phaseDeg.toFixed(2)),
+      });
     }
     return points;
   }, [result]);
 
   return (
-    <ResponsiveContainer width="100%" height={200}>
-      <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-        <XAxis dataKey="wLog" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "log₁₀(ω)", position: "insideBottomRight", offset: -5, fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
-        <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "dB", angle: -90, position: "insideLeft", fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
-        <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
-        <ReferenceLine y={0} stroke="hsl(var(--warning))" strokeDasharray="5 3" />
-        <Line type="monotone" dataKey="mag" stroke="hsl(var(--accent))" strokeWidth={1.5} dot={false} name="|G(jω)| dB" />
-      </LineChart>
-    </ResponsiveContainer>
+    <div className="space-y-2">
+      <ResponsiveContainer width="100%" height={160}>
+        <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+          <XAxis dataKey="wLog" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} hide />
+          <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "dB", angle: -90, position: "insideLeft", fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
+          <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
+          <ReferenceLine y={0} stroke="hsl(var(--warning))" strokeDasharray="5 3" />
+          <Line type="monotone" dataKey="mag" stroke="hsl(var(--accent))" strokeWidth={1.5} dot={false} name="|G(jω)| dB" />
+        </LineChart>
+      </ResponsiveContainer>
+      <ResponsiveContainer width="100%" height={160}>
+        <LineChart data={data} margin={{ top: 0, right: 10, left: 0, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+          <XAxis dataKey="wLog" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "log₁₀(ω)", position: "insideBottomRight", offset: -5, fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
+          <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "deg", angle: -90, position: "insideLeft", fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
+          <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
+          <ReferenceLine y={-180} stroke="hsl(var(--destructive))" strokeDasharray="5 3" />
+          <Line type="monotone" dataKey="phase" stroke="hsl(var(--primary))" strokeWidth={1.5} dot={false} name="∠G(jω) °" />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 
