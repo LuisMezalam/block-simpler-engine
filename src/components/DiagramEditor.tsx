@@ -1335,6 +1335,24 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
           </button>
         )}
 
+        {/* Export */}
+        <div className="flex items-center gap-0.5 mr-1 border-l border-border pl-2 ml-1">
+          <button
+            onClick={() => exportDiagram("png")}
+            title="Export as PNG"
+            className="px-1.5 py-1 text-[10px] font-mono text-muted-foreground hover:text-foreground hover:bg-secondary rounded transition-all"
+          >
+            📷 PNG
+          </button>
+          <button
+            onClick={() => exportDiagram("svg")}
+            title="Export as SVG"
+            className="px-1.5 py-1 text-[10px] font-mono text-muted-foreground hover:text-foreground hover:bg-secondary rounded transition-all"
+          >
+            🖼 SVG
+          </button>
+        </div>
+
         {/* Analyze */}
         <button
           onClick={handleAnalyze}
