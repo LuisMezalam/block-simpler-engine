@@ -6,6 +6,7 @@ import {
 } from "@/lib/diagramEngine";
 import { SolverResult } from "@/lib/solver";
 import { cn } from "@/lib/utils";
+import { GainTuner } from "./GainTuner";
 
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -1633,6 +1634,9 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
             </div>
           );
         })()}
+
+        {/* Gain Tuner */}
+        <GainTuner diagram={diagram} onAnalyze={onAnalyze} />
       </div>
 
       {/* Inline toast notification */}
