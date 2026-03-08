@@ -79,6 +79,15 @@ function TFInput({
 function ResultPanel({ result, error }: { result: SolverResult | null; error: string }) {
   const [showDerivation, setShowDerivation] = useState(false);
 
+  const margins = useMemo<StabilityMargins | null>(() => {
+    if (!result) return null;
+    try {
+      return computeMargins(result.equivalentTF.num, result.equivalentTF.den);
+    } catch {
+      return null;
+    }
+  }, [result]);
+
   if (error) {
     return (
       <div className="panel-section p-4">
