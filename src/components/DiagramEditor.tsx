@@ -1469,6 +1469,110 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
             onCancel={() => setEditingNodeId(null)}
           />
         )}
+
+        {/* Minimap */}
+        {diagram.nodes.length > 0 && (() => {
+          const MINIMAP_W = 160;
+          const MINIMAP_H = 100;
+          const PAD = 30;
+          // Compute bounding box of all nodes
+          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+          diagram.nodes.forEach(n => {
+            const w = n.type === "block" ? BLOCK_W : n.type === "input" || n.type === "output" ? 20 : JUNCTION_R * 2;
+            const h = n.type === "block" ? BLOCK_H : JUNCTION_R * 2;
+            const nx = n.type === "block" ? n.x : n.x - w / 2;
+            const ny = n.type === "block" ? n.y : n.y - h / 2;
+            minX = Math.min(minX, nx);
+            minY = Math.min(minY, ny);
+            maxX = Math.max(maxX, nx + w);
+            maxY = Math.max(maxY, ny + h);
+          });
+          minX -= PAD; minY -= PAD; maxX += PAD; maxY += PAD;
+          const contentW = maxX - minX || 1;
+          const contentH = maxY - minY || 1;
+          const scale = Math.min(MINIMAP_W / contentW, MINIMAP_H / contentH);
+          // Viewport rect in diagram coords
+          const vpX = -pan.x / zoom;
+          const vpY = -pan.y / zoom;
+          const vpW = 600 / zoom;
+          const vpH = 350 / zoom;
+          // Map to minimap coords
+          const vx = (vpX - minX) * scale;
+          const vy = (vpY - minY) * scale;
+          const vw = vpW * scale;
+          const vh = vpH * scale;
+
+          return (
+            <div
+              className="absolute bottom-2 right-2 z-30 rounded border border-border/60 bg-background/80 backdrop-blur-sm shadow-lg overflow-hidden"
+              style={{ width: MINIMAP_W, height: MINIMAP_H }}
+            >
+              <svg width={MINIMAP_W} height={MINIMAP_H}>
+                {/* Nodes */}
+                {diagram.nodes.map(n => {
+                  const cx = (n.x - minX) * scale;
+                  const cy = (n.y - minY) * scale;
+                  if (n.type === "block") {
+                    return (
+                      <rect
+                        key={n.id}
+                        x={(n.x - minX) * scale}
+                        y={(n.y - minY) * scale}
+                        width={BLOCK_W * scale}
+                        height={BLOCK_H * scale}
+                        rx={2}
+                        fill={/^H/i.test(n.label) ? "hsl(45,80%,55%)" : "hsl(174,80%,45%)"}
+                        opacity={0.7}
+                      />
+                    );
+                  }
+                  return (
+                    <circle
+                      key={n.id}
+                      cx={cx}
+                      cy={cy}
+                      r={Math.max(2, (n.type === "pickoff" ? 4 : JUNCTION_R) * scale)}
+                      fill="hsl(174,80%,55%)"
+                      opacity={0.7}
+                    />
+                  );
+                })}
+                {/* Edges */}
+                {diagram.edges.map(edge => {
+                  const fromNode = diagram.nodes.find(n => n.id === edge.from);
+                  const toNode = diagram.nodes.find(n => n.id === edge.to);
+                  if (!fromNode || !toNode) return null;
+                  const from = getOutputPort(fromNode);
+                  const to = getInputPort(toNode);
+                  return (
+                    <line
+                      key={edge.id}
+                      x1={(from.x - minX) * scale}
+                      y1={(from.y - minY) * scale}
+                      x2={(to.x - minX) * scale}
+                      y2={(to.y - minY) * scale}
+                      stroke="hsl(174,80%,55%)"
+                      strokeWidth={0.5}
+                      opacity={0.4}
+                    />
+                  );
+                })}
+                {/* Viewport indicator */}
+                <rect
+                  x={Math.max(0, vx)}
+                  y={Math.max(0, vy)}
+                  width={Math.min(vw, MINIMAP_W)}
+                  height={Math.min(vh, MINIMAP_H)}
+                  fill="hsl(196,85%,50%)"
+                  fillOpacity={0.1}
+                  stroke="hsl(196,85%,50%)"
+                  strokeWidth={1.5}
+                  rx={2}
+                />
+              </svg>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Inline toast notification */}
