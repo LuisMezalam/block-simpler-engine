@@ -447,33 +447,3 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
       </div>
     </div>
   );
-}
-    { id: "step", label: "Step Response" },
-    { id: "bode", label: "Bode Plot" },
-  ];
-
-  return (
-    <div className="panel-section overflow-hidden">
-      <div className="flex border-b border-border">
-        {tabs.map(t => (
-          <button
-            key={t.id}
-            onClick={() => setTab(t.id)}
-            className={`flex-1 py-2 text-[10px] font-semibold tracking-wide uppercase transition-all ${
-              tab === t.id
-                ? "text-primary border-b-2 border-primary bg-primary/5"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-      <div className="p-3 min-h-[220px]">
-        {tab === "pzmap" && <PoleZeroMap result={result} />}
-        {tab === "step" && <StepResponsePlot result={result} />}
-        {tab === "bode" && <BodePlot result={result} />}
-      </div>
-    </div>
-  );
-}
