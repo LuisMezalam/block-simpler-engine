@@ -166,9 +166,17 @@ function StepResponsePlot({ result }: { result: SolverResult }) {
 // ─── Bode Magnitude Plot ─────────────────────────────────────────────────────
 
 function BodePlot({ result }: { result: SolverResult }) {
-  const data = useMemo(() => {
+  const { data, margins } = useMemo(() => {
     const { num, den } = result.equivalentTF;
     const points: { w: number; wLog: number; mag: number; phase: number }[] = [];
+
+    let gcLog: number | null = null;
+    let pcLog: number | null = null;
+    let gmDb = Infinity;
+    let pmDeg = Infinity;
+    let prevMagDb = NaN;
+    let prevPhase = NaN;
+    let prevExp = NaN;
 
     for (let exp = -2; exp <= 3; exp += 0.05) {
       const w = Math.pow(10, exp);
@@ -198,10 +206,26 @@ function BodePlot({ result }: { result: SolverResult }) {
       const denMag = Math.sqrt(denRe * denRe + denIm * denIm);
       const magDb = 20 * Math.log10(numMag / (denMag || 1e-30));
 
-      // Phase: ∠G(jω) = ∠num(jω) - ∠den(jω)
       const numPhase = Math.atan2(numIm, numRe);
       const denPhase = Math.atan2(denIm, denRe);
       const phaseDeg = (numPhase - denPhase) * (180 / Math.PI);
+
+      if (!isNaN(prevMagDb) && gcLog === null) {
+        if ((prevMagDb > 0 && magDb <= 0) || (prevMagDb < 0 && magDb >= 0)) {
+          const t = Math.abs(prevMagDb) / (Math.abs(prevMagDb) + Math.abs(magDb) + 1e-30);
+          gcLog = parseFloat((prevExp + t * (exp - prevExp)).toFixed(2));
+          pmDeg = 180 + (prevPhase + t * (phaseDeg - prevPhase));
+        }
+      }
+
+      if (!isNaN(prevPhase) && pcLog === null) {
+        if ((prevPhase > -180 && phaseDeg <= -180) || (prevPhase < -180 && phaseDeg >= -180)) {
+          const t = Math.abs(prevPhase + 180) / (Math.abs(prevPhase + 180) + Math.abs(phaseDeg + 180) + 1e-30);
+          pcLog = parseFloat((prevExp + t * (exp - prevExp)).toFixed(2));
+          const magAtPc = prevMagDb + t * (magDb - prevMagDb);
+          gmDb = -magAtPc;
+        }
+      }
 
       points.push({
         w,
@@ -209,12 +233,22 @@ function BodePlot({ result }: { result: SolverResult }) {
         mag: parseFloat(magDb.toFixed(2)),
         phase: parseFloat(phaseDeg.toFixed(2)),
       });
+
+      prevMagDb = magDb;
+      prevPhase = phaseDeg;
+      prevExp = exp;
     }
-    return points;
+    return { data: points, margins: { gcLog, pcLog, gmDb, pmDeg } };
   }, [result]);
 
+  const { gcLog, pcLog, gmDb, pmDeg } = margins;
+
   return (
-    <div className="space-y-2">
+    <div className="space-y-1">
+      <div className="flex gap-3 px-2 py-1 text-[9px] font-mono text-muted-foreground">
+        <span>GM: <span className={gmDb !== Infinity ? (gmDb > 0 ? "text-green-400" : "text-destructive") : ""}>{gmDb === Infinity ? "∞" : `${gmDb.toFixed(1)} dB`}</span></span>
+        <span>PM: <span className={pmDeg !== Infinity ? (pmDeg > 0 ? "text-green-400" : "text-destructive") : ""}>{pmDeg === Infinity ? "∞" : `${pmDeg.toFixed(1)}°`}</span></span>
+      </div>
       <ResponsiveContainer width="100%" height={160}>
         <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -222,6 +256,8 @@ function BodePlot({ result }: { result: SolverResult }) {
           <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "dB", angle: -90, position: "insideLeft", fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
           <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
           <ReferenceLine y={0} stroke="hsl(var(--warning))" strokeDasharray="5 3" />
+          {pcLog !== null && <ReferenceLine x={pcLog} stroke="hsl(var(--destructive))" strokeDasharray="6 3" strokeWidth={1.5} label={{ value: `GM=${gmDb.toFixed(1)}dB`, position: "top", fontSize: 8, fill: "hsl(var(--destructive))" }} />}
+          {gcLog !== null && <ReferenceLine x={gcLog} stroke="hsl(var(--primary))" strokeDasharray="6 3" strokeWidth={1} />}
           <Line type="monotone" dataKey="mag" stroke="hsl(var(--accent))" strokeWidth={1.5} dot={false} name="|G(jω)| dB" />
         </LineChart>
       </ResponsiveContainer>
@@ -232,12 +268,16 @@ function BodePlot({ result }: { result: SolverResult }) {
           <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "deg", angle: -90, position: "insideLeft", fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
           <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
           <ReferenceLine y={-180} stroke="hsl(var(--destructive))" strokeDasharray="5 3" />
+          {gcLog !== null && <ReferenceLine x={gcLog} stroke="hsl(var(--primary))" strokeDasharray="6 3" strokeWidth={1.5} label={{ value: `PM=${pmDeg.toFixed(1)}°`, position: "top", fontSize: 8, fill: "hsl(var(--primary))" }} />}
+          {pcLog !== null && <ReferenceLine x={pcLog} stroke="hsl(var(--destructive))" strokeDasharray="6 3" strokeWidth={1} />}
           <Line type="monotone" dataKey="phase" stroke="hsl(var(--primary))" strokeWidth={1.5} dot={false} name="∠G(jω) °" />
         </LineChart>
       </ResponsiveContainer>
     </div>
   );
 }
+
+
 
 // ─── Combined Panel ──────────────────────────────────────────────────────────
 
