@@ -659,22 +659,3 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
     </div>
   );
 }
-            className={`flex-1 py-2 text-[10px] font-semibold tracking-wide uppercase transition-all ${
-              tab === t.id
-                ? "text-primary border-b-2 border-primary bg-primary/5"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-      <div className="p-3 min-h-[220px]">
-        {tab === "pzmap" && <PoleZeroMap result={result} />}
-        {tab === "step" && <StepResponsePlot result={result} />}
-        {tab === "bode" && <BodePlot result={result} />}
-        {tab === "nyquist" && <NyquistPlot result={result} />}
-      </div>
-    </div>
-  );
-}
