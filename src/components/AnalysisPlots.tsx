@@ -1,10 +1,12 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useRef, useCallback } from "react";
 import { SolverResult } from "@/lib/solver";
 import { evaluate, roots } from "@/lib/polynomial";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis,
   CartesianGrid, Tooltip, ReferenceLine,
 } from "recharts";
+import html2canvas from "html2canvas";
+import { Download } from "lucide-react";
 
 // ─── Pole-Zero Map (SVG) ─────────────────────────────────────────────────────
 
@@ -671,6 +673,7 @@ type PlotTab = "pzmap" | "step" | "bode" | "nyquist" | "rlocus";
 
 export function AnalysisPlots({ result }: { result: SolverResult }) {
   const [tab, setTab] = React.useState<PlotTab>("pzmap");
+  const plotRef = useRef<HTMLDivElement>(null);
 
   const tabs: { id: PlotTab; label: string }[] = [
     { id: "pzmap", label: "P-Z" },
@@ -680,9 +683,28 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
     { id: "rlocus", label: "R.Locus" },
   ];
 
+  const handleExport = useCallback(async () => {
+    if (!plotRef.current) return;
+
+    try {
+      const canvas = await html2canvas(plotRef.current, {
+        backgroundColor: "#0d1117",
+        scale: 2,
+        logging: false,
+      });
+
+      const link = document.createElement("a");
+      link.download = `${tab}-plot.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    } catch (err) {
+      console.error("Export failed:", err);
+    }
+  }, [tab]);
+
   return (
     <div className="panel-section overflow-hidden">
-      <div className="flex border-b border-border">
+      <div className="flex border-b border-border items-center">
         {tabs.map(t => (
           <button
             key={t.id}
@@ -696,8 +718,15 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
             {t.label}
           </button>
         ))}
+        <button
+          onClick={handleExport}
+          className="px-2 py-2 text-muted-foreground hover:text-primary transition-colors"
+          title="Export as PNG"
+        >
+          <Download className="w-3.5 h-3.5" />
+        </button>
       </div>
-      <div className="p-3 min-h-[220px]">
+      <div ref={plotRef} className="p-3 min-h-[220px] bg-background">
         {tab === "pzmap" && <PoleZeroMap result={result} />}
         {tab === "step" && <TimeResponsePlot result={result} />}
         {tab === "bode" && <BodePlot result={result} />}
