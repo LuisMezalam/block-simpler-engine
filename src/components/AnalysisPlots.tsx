@@ -659,11 +659,6 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
     </div>
   );
 }
-
-  return (
-    <div className="panel-section overflow-hidden">
-      <div className="flex border-b border-border">
-        {tabs.map(t => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
