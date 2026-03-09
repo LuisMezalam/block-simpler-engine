@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import { SolverResult } from "@/lib/solver";
-import { evaluate } from "@/lib/polynomial";
+import { evaluate, roots } from "@/lib/polynomial";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis,
   CartesianGrid, Tooltip, ReferenceLine,
@@ -433,18 +433,203 @@ function NyquistPlot({ result }: { result: SolverResult }) {
   );
 }
 
+// ─── Root Locus Plot (SVG) ───────────────────────────────────────────────────
+
+function RootLocusPlot({ result }: { result: SolverResult }) {
+  const { loci, olPoles, olZeros } = useMemo(() => {
+    const { num, den } = result.equivalentTF;
+    // For root locus we need to find roots of den + K*num = 0 for varying K
+    // Characteristic eq: 1 + K·G(s) = 0  →  den(s) + K·num(s) = 0
+
+    const numC = [...num.coeffs];
+    const denC = [...den.coeffs];
+    const maxLen = Math.max(numC.length, denC.length);
+    while (numC.length < maxLen) numC.push(0);
+    while (denC.length < maxLen) denC.push(0);
+
+    // Open-loop poles (K=0) and zeros
+    const olp = roots(den);
+    const olz = roots(num);
+
+    // Sweep K from 0 to large value
+    const kValues: number[] = [];
+    // Log-spaced from 0.01 to 1000 + a few near zero
+    for (let e = -2; e <= 3; e += 0.03) kValues.push(Math.pow(10, e));
+    kValues.unshift(0.001, 0.005);
+
+    const branches: Array<Array<{ re: number; im: number; k: number }>> = [];
+    // Initialize branches from open-loop poles
+    for (let i = 0; i < olp.length; i++) branches.push([]);
+
+    for (const K of kValues) {
+      // Build polynomial den + K*num
+      const charCoeffs = denC.map((d, i) => d + K * numC[i]);
+      // Trim trailing zeros
+      while (charCoeffs.length > 1 && Math.abs(charCoeffs[charCoeffs.length - 1]) < 1e-15) charCoeffs.pop();
+
+      const charPoly = { coeffs: charCoeffs };
+      const rts = roots(charPoly);
+
+      // Match roots to nearest branch (greedy assignment)
+      const used = new Set<number>();
+      const branchOrder: number[] = [];
+
+      for (let b = 0; b < branches.length; b++) {
+        const prev = branches[b].length > 0
+          ? branches[b][branches[b].length - 1]
+          : olp[b] || { re: 0, im: 0 };
+
+        let bestIdx = -1, bestDist = Infinity;
+        for (let r = 0; r < rts.length; r++) {
+          if (used.has(r) || isNaN(rts[r].re)) continue;
+          const dist = (rts[r].re - prev.re) ** 2 + (rts[r].im - prev.im) ** 2;
+          if (dist < bestDist) { bestDist = dist; bestIdx = r; }
+        }
+        if (bestIdx >= 0) {
+          used.add(bestIdx);
+          branchOrder.push(bestIdx);
+        }
+      }
+
+      branchOrder.forEach((ri, b) => {
+        if (ri >= 0 && ri < rts.length) {
+          branches[b].push({ re: rts[ri].re, im: rts[ri].im, k: K });
+        }
+      });
+    }
+
+    return { loci: branches, olPoles: olp, olZeros: olz };
+  }, [result]);
+
+  // Compute bounds
+  const allPts = [
+    ...olPoles, ...olZeros,
+    ...loci.flatMap(b => b),
+  ].filter(p => !isNaN(p.re) && Math.abs(p.re) < 100 && Math.abs(p.im) < 100);
+
+  if (allPts.length < 2) {
+    return (
+      <div className="flex items-center justify-center h-full text-xs text-muted-foreground font-mono">
+        Insufficient data for root locus
+      </div>
+    );
+  }
+
+  const reVals = allPts.map(p => p.re);
+  const imVals = allPts.map(p => p.im);
+  const margin = 0.5;
+  const maxAbs = Math.max(
+    Math.max(...reVals.map(Math.abs), ...imVals.map(Math.abs)),
+    0.5
+  ) + margin;
+
+  const W = 280, H = 280;
+  const cx = W / 2, cy = H / 2;
+  const scale = (W / 2 - 20) / maxAbs;
+
+  const toX = (re: number) => cx + re * scale;
+  const toY = (im: number) => cy - im * scale;
+
+  // Colors for branches
+  const branchColors = [
+    "hsl(var(--primary))",
+    "hsl(var(--accent))",
+    "hsl(160, 70%, 50%)",
+    "hsl(30, 80%, 55%)",
+    "hsl(280, 60%, 55%)",
+    "hsl(350, 70%, 55%)",
+  ];
+
+  return (
+    <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} className="max-w-[280px] mx-auto">
+      {/* Axes */}
+      <line x1={0} y1={cy} x2={W} y2={cy} stroke="hsl(var(--border))" strokeWidth={1} />
+      <line x1={cx} y1={0} x2={cx} y2={H} stroke="hsl(var(--border))" strokeWidth={1} />
+      <text x={W - 10} y={cy - 4} fill="hsl(var(--muted-foreground))" fontSize={8} fontFamily="monospace">Re</text>
+      <text x={cx + 4} y={10} fill="hsl(var(--muted-foreground))" fontSize={8} fontFamily="monospace">Im</text>
+
+      {/* LHP shading */}
+      <rect x={0} y={0} width={cx} height={H} fill="hsl(var(--primary) / 0.03)" />
+
+      {/* jω axis label */}
+      <line x1={cx} y1={0} x2={cx} y2={H} stroke="hsl(var(--border))" strokeWidth={0.5} strokeDasharray="4 2" />
+
+      {/* Root locus branches */}
+      {loci.map((branch, b) => {
+        if (branch.length < 2) return null;
+        const color = branchColors[b % branchColors.length];
+        const d = branch
+          .filter(p => Math.abs(p.re) < maxAbs * 1.5 && Math.abs(p.im) < maxAbs * 1.5)
+          .map((p, i) => `${i === 0 ? "M" : "L"}${toX(p.re).toFixed(1)},${toY(p.im).toFixed(1)}`)
+          .join(" ");
+        return <path key={b} d={d} fill="none" stroke={color} strokeWidth={1.5} opacity={0.8} />;
+      })}
+
+      {/* Open-loop poles (×) */}
+      {olPoles.filter(p => !isNaN(p.re)).map((p, i) => {
+        const x = toX(p.re), y = toY(p.im);
+        return (
+          <g key={`p${i}`}>
+            <line x1={x - 5} y1={y - 5} x2={x + 5} y2={y + 5} stroke="hsl(var(--destructive))" strokeWidth={2} />
+            <line x1={x - 5} y1={y + 5} x2={x + 5} y2={y - 5} stroke="hsl(var(--destructive))" strokeWidth={2} />
+          </g>
+        );
+      })}
+
+      {/* Open-loop zeros (○) */}
+      {olZeros.filter(z => !isNaN(z.re)).map((z, i) => {
+        const x = toX(z.re), y = toY(z.im);
+        return (
+          <circle key={`z${i}`} cx={x} cy={y} r={5}
+            fill="none" stroke="hsl(var(--accent))" strokeWidth={2} />
+        );
+      })}
+
+      {/* Direction arrows on branches */}
+      {loci.map((branch, b) => {
+        if (branch.length < 10) return null;
+        const mid = Math.floor(branch.length / 3);
+        const p0 = branch[mid], p1 = branch[mid + 1];
+        if (!p0 || !p1) return null;
+        const ax = toX(p0.re), ay = toY(p0.im);
+        const dx = toX(p1.re) - ax, dy = toY(p1.im) - ay;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        if (len < 1) return null;
+        const ux = dx / len, uy = dy / len;
+        return (
+          <polygon key={`a${b}`}
+            points={`${ax + ux * 6},${ay + uy * 6} ${ax - uy * 3},${ay + ux * 3} ${ax + uy * 3},${ay - ux * 3}`}
+            fill={branchColors[b % branchColors.length]}
+          />
+        );
+      })}
+
+      {/* Legend */}
+      <g transform={`translate(6, ${H - 20})`}>
+        <line x1={0} y1={0} x2={6} y2={6} stroke="hsl(var(--destructive))" strokeWidth={1.5} />
+        <line x1={6} y1={0} x2={0} y2={6} stroke="hsl(var(--destructive))" strokeWidth={1.5} />
+        <text x={10} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">OL Poles</text>
+        <circle cx={60} cy={3} r={3} fill="none" stroke="hsl(var(--accent))" strokeWidth={1.5} />
+        <text x={66} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">OL Zeros</text>
+        <text x={110} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">K: 0→∞</text>
+      </g>
+    </svg>
+  );
+}
+
 // ─── Combined Panel ──────────────────────────────────────────────────────────
 
-type PlotTab = "pzmap" | "step" | "bode" | "nyquist";
+type PlotTab = "pzmap" | "step" | "bode" | "nyquist" | "rlocus";
 
 export function AnalysisPlots({ result }: { result: SolverResult }) {
   const [tab, setTab] = React.useState<PlotTab>("pzmap");
 
   const tabs: { id: PlotTab; label: string }[] = [
-    { id: "pzmap", label: "Pole-Zero" },
+    { id: "pzmap", label: "P-Z" },
     { id: "step", label: "Step" },
     { id: "bode", label: "Bode" },
     { id: "nyquist", label: "Nyquist" },
+    { id: "rlocus", label: "R.Locus" },
   ];
 
   return (
@@ -469,6 +654,7 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
         {tab === "step" && <StepResponsePlot result={result} />}
         {tab === "bode" && <BodePlot result={result} />}
         {tab === "nyquist" && <NyquistPlot result={result} />}
+        {tab === "rlocus" && <RootLocusPlot result={result} />}
       </div>
     </div>
   );
