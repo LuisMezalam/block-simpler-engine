@@ -94,10 +94,148 @@ function PoleZeroMap({ result }: { result: SolverResult }) {
   );
 }
 
-// ─── Step Response ───────────────────────────────────────────────────────────
+// ─── Shared simulation engine ────────────────────────────────────────────────
 
-function StepResponsePlot({ result }: { result: SolverResult }) {
+function simulate(result: SolverResult, inputType: "step" | "impulse") {
+  const { num, den } = result.equivalentTF;
+  const n = den.coeffs.length - 1;
+  if (n === 0) {
+    const gain = num.coeffs[0] / den.coeffs[0];
+    const val = inputType === "step" ? gain : 0;
+    return Array.from({ length: 200 }, (_, i) => ({ t: i * 0.05, y: i === 0 && inputType === "impulse" ? gain : val }));
+  }
+
+  const an = den.coeffs[n];
+  const a = den.coeffs.map(c => c / an);
+  const b = num.coeffs.map(c => c / an);
+
+  const dt = 0.005;
+  const tMax = 10;
+  const steps = Math.ceil(tMax / dt);
+  const x = new Float64Array(n);
+  const points: { t: number; y: number }[] = [];
+
+  for (let k = 0; k <= steps; k++) {
+    const t = k * dt;
+    let y = 0;
+    for (let i = 0; i < Math.min(b.length, n); i++) {
+      y += (b[i] || 0) * x[i];
+    }
+    if (b.length > n) y += b[n];
+    if (k % 10 === 0) points.push({ t: parseFloat(t.toFixed(3)), y: parseFloat(y.toFixed(6)) });
+
+    // Input: step=1 always, impulse=1/dt at k=0 only
+    const u = inputType === "step" ? 1 : (k === 0 ? 1 / dt : 0);
+
+    const xn = new Float64Array(n);
+    for (let i = 0; i < n - 1; i++) xn[i] = x[i] + dt * x[i + 1];
+    let xdot_last = u;
+    for (let i = 0; i < n; i++) xdot_last -= a[i] * x[i];
+    xn[n - 1] = x[n - 1] + dt * xdot_last;
+    x.set(xn);
+  }
+  return points;
+}
+
+// ─── Time Response (Step + Impulse) ──────────────────────────────────────────
+
+function TimeResponsePlot({ result }: { result: SolverResult }) {
+  const [mode, setMode] = React.useState<"step" | "impulse">("step");
+
   const { data, metrics } = useMemo(() => {
+    const points = simulate(result, mode);
+
+    const finalValue = points.length > 0 ? points[points.length - 1].y : 0;
+    let peakValue = -Infinity, peakTime = 0;
+    let riseTime = 0, settlingTime = 0;
+    let foundRise10 = false, rise10t = 0;
+
+    for (const p of points) {
+      if (p.y > peakValue) { peakValue = p.y; peakTime = p.t; }
+      if (mode === "step") {
+        if (!foundRise10 && finalValue !== 0 && p.y >= 0.1 * finalValue) { rise10t = p.t; foundRise10 = true; }
+        if (foundRise10 && riseTime === 0 && p.y >= 0.9 * finalValue) { riseTime = p.t - rise10t; }
+      }
+    }
+
+    // Settling time (2% band)
+    const ref = mode === "step" ? finalValue : 0;
+    const band = mode === "step" ? 0.02 * Math.abs(finalValue || 1) : 0.02 * Math.abs(peakValue || 1);
+    for (let i = points.length - 1; i >= 0; i--) {
+      if (Math.abs(points[i].y - ref) > band) { settlingTime = points[i].t; break; }
+    }
+
+    const overshoot = mode === "step" && finalValue !== 0
+      ? Math.max(0, ((peakValue - finalValue) / Math.abs(finalValue)) * 100)
+      : 0;
+
+    return { data: points, metrics: { finalValue, overshoot, riseTime, settlingTime, peakTime, peakValue } };
+  }, [result, mode]);
+
+  if (data.length === 0) return null;
+
+  const { finalValue, overshoot, riseTime, settlingTime, peakTime, peakValue } = metrics;
+
+  const stepMetrics = [
+    { label: "Overshoot", value: `${overshoot.toFixed(1)}%`, warn: overshoot > 25 },
+    { label: "Rise Time", value: `${riseTime.toFixed(3)}s`, warn: false },
+    { label: "Settling", value: `${settlingTime.toFixed(2)}s`, warn: settlingTime > 8 },
+    { label: "Peak Time", value: `${peakTime.toFixed(3)}s`, warn: false },
+  ];
+
+  const impulseMetrics = [
+    { label: "Peak", value: `${peakValue.toFixed(3)}`, warn: false },
+    { label: "Peak Time", value: `${peakTime.toFixed(3)}s`, warn: false },
+    { label: "Settling", value: `${settlingTime.toFixed(2)}s`, warn: settlingTime > 8 },
+    { label: "Final", value: `${finalValue.toFixed(4)}`, warn: Math.abs(finalValue) > 0.05 },
+  ];
+
+  const activeMetrics = mode === "step" ? stepMetrics : impulseMetrics;
+
+  return (
+    <div className="space-y-2">
+      {/* Mode toggle */}
+      <div className="flex gap-1 px-1">
+        {(["step", "impulse"] as const).map(m => (
+          <button
+            key={m}
+            onClick={() => setMode(m)}
+            className={`flex-1 py-1 text-[9px] font-semibold uppercase rounded transition-all ${
+              mode === m
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted/50 text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {m === "step" ? "Step Response" : "Impulse Response"}
+          </button>
+        ))}
+      </div>
+
+      <ResponsiveContainer width="100%" height={170}>
+        <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+          <XAxis dataKey="t" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "t (s)", position: "insideBottomRight", offset: -5, fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
+          <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
+          <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
+          {mode === "step" && <ReferenceLine y={finalValue} stroke="hsl(var(--warning))" strokeDasharray="5 3" strokeWidth={1} />}
+          <ReferenceLine y={0} stroke="hsl(var(--border))" />
+          <Line type="monotone" dataKey="y" stroke={mode === "step" ? "hsl(var(--primary))" : "hsl(var(--accent))"} strokeWidth={1.5} dot={false} name={mode === "step" ? "y(t)" : "h(t)"} />
+        </LineChart>
+      </ResponsiveContainer>
+
+      <div className="grid grid-cols-4 gap-1 px-1">
+        {activeMetrics.map(m => (
+          <div key={m.label} className="rounded border border-border bg-card/50 px-2 py-1 text-center">
+            <div className="text-[8px] text-muted-foreground uppercase tracking-wider">{m.label}</div>
+            <div className={`text-[11px] font-mono font-semibold ${m.warn ? "text-destructive" : "text-foreground"}`}>{m.value}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
     const { num, den } = result.equivalentTF;
     const n = den.coeffs.length - 1;
     if (n === 0) {
