@@ -187,72 +187,8 @@ function StepResponsePlot({ result }: { result: SolverResult }) {
     </div>
   );
 }
-    const { num, den } = result.equivalentTF;
-    // Approximate step response via inverse Laplace numerical integration (Euler)
-    // For G(s), step response = L^{-1}[G(s)/s]
-    // We'll use state-space simulation: convert to controllable canonical form
-    const n = den.coeffs.length - 1; // order
-    if (n === 0) {
-      // Static gain
-      const gain = num.coeffs[0] / den.coeffs[0];
-      return Array.from({ length: 100 }, (_, i) => ({ t: i * 0.1, y: gain }));
-    }
 
-    // Normalize denominator to monic
-    const an = den.coeffs[n];
-    const a = den.coeffs.map(c => c / an);
-    const b = num.coeffs.map(c => c / an);
 
-    // State vector x[0..n-1], controllable canonical form
-    // x' = A*x + B*u, y = C*x + D*u
-    const dt = 0.01;
-    const tMax = 10;
-    const steps = Math.ceil(tMax / dt);
-    const x = new Float64Array(n);
-    const points: { t: number; y: number }[] = [];
-
-    for (let k = 0; k <= steps; k++) {
-      const t = k * dt;
-      // Output: y = sum of b[i]*x[i] (simplified)
-      let y = 0;
-      for (let i = 0; i < Math.min(b.length, n); i++) {
-        y += (b[i] || 0) * x[i];
-      }
-      // Direct feedthrough
-      if (b.length > n) y += b[n];
-
-      if (k % 5 === 0) points.push({ t: parseFloat(t.toFixed(3)), y: parseFloat(y.toFixed(6)) });
-
-      // State update (controllable canonical)
-      const xn = new Float64Array(n);
-      for (let i = 0; i < n - 1; i++) xn[i] = x[i] + dt * x[i + 1];
-      // Last state derivative
-      let xdot_last = 1; // step input u=1
-      for (let i = 0; i < n; i++) xdot_last -= a[i] * x[i];
-      xn[n - 1] = x[n - 1] + dt * xdot_last;
-      x.set(xn);
-    }
-
-    return points;
-  }, [result]);
-
-  if (data.length === 0) return null;
-
-  return (
-    <ResponsiveContainer width="100%" height={200}>
-      <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-        <XAxis dataKey="t" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "t (s)", position: "insideBottomRight", offset: -5, fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
-        <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
-        <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
-        <ReferenceLine y={0} stroke="hsl(var(--border))" />
-        <Line type="monotone" dataKey="y" stroke="hsl(var(--primary))" strokeWidth={1.5} dot={false} name="y(t)" />
-      </LineChart>
-    </ResponsiveContainer>
-  );
-}
-
-// ─── Bode Magnitude Plot ─────────────────────────────────────────────────────
 
 function BodePlot({ result }: { result: SolverResult }) {
   const { data, margins } = useMemo(() => {
