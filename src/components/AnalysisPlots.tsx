@@ -276,73 +276,8 @@ function BodePlot({ result }: { result: SolverResult }) {
     </div>
   );
 }
-      const w = Math.pow(10, exp);
-      let numRe = 0, numIm = 0;
-      for (let k = 0; k < num.coeffs.length; k++) {
-        const c = num.coeffs[k];
-        const wk = Math.pow(w, k);
-        switch (k % 4) {
-          case 0: numRe += c * wk; break;
-          case 1: numIm += c * wk; break;
-          case 2: numRe -= c * wk; break;
-          case 3: numIm -= c * wk; break;
-        }
-      }
-      let denRe = 0, denIm = 0;
-      for (let k = 0; k < den.coeffs.length; k++) {
-        const c = den.coeffs[k];
-        const wk = Math.pow(w, k);
-        switch (k % 4) {
-          case 0: denRe += c * wk; break;
-          case 1: denIm += c * wk; break;
-          case 2: denRe -= c * wk; break;
-          case 3: denIm -= c * wk; break;
-        }
-      }
-      const numMag = Math.sqrt(numRe * numRe + numIm * numIm);
-      const denMag = Math.sqrt(denRe * denRe + denIm * denIm);
-      const magDb = 20 * Math.log10(numMag / (denMag || 1e-30));
 
-      // Phase: ∠G(jω) = ∠num(jω) - ∠den(jω)
-      const numPhase = Math.atan2(numIm, numRe);
-      const denPhase = Math.atan2(denIm, denRe);
-      const phaseDeg = (numPhase - denPhase) * (180 / Math.PI);
 
-      points.push({
-        w,
-        wLog: parseFloat(exp.toFixed(2)),
-        mag: parseFloat(magDb.toFixed(2)),
-        phase: parseFloat(phaseDeg.toFixed(2)),
-      });
-    }
-    return points;
-  }, [result]);
-
-  return (
-    <div className="space-y-2">
-      <ResponsiveContainer width="100%" height={160}>
-        <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-          <XAxis dataKey="wLog" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} hide />
-          <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "dB", angle: -90, position: "insideLeft", fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
-          <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
-          <ReferenceLine y={0} stroke="hsl(var(--warning))" strokeDasharray="5 3" />
-          <Line type="monotone" dataKey="mag" stroke="hsl(var(--accent))" strokeWidth={1.5} dot={false} name="|G(jω)| dB" />
-        </LineChart>
-      </ResponsiveContainer>
-      <ResponsiveContainer width="100%" height={160}>
-        <LineChart data={data} margin={{ top: 0, right: 10, left: 0, bottom: 5 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-          <XAxis dataKey="wLog" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "log₁₀(ω)", position: "insideBottomRight", offset: -5, fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
-          <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "deg", angle: -90, position: "insideLeft", fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
-          <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
-          <ReferenceLine y={-180} stroke="hsl(var(--destructive))" strokeDasharray="5 3" />
-          <Line type="monotone" dataKey="phase" stroke="hsl(var(--primary))" strokeWidth={1.5} dot={false} name="∠G(jω) °" />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
 
 // ─── Combined Panel ──────────────────────────────────────────────────────────
 
