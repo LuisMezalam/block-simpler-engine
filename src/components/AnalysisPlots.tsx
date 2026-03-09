@@ -97,7 +97,96 @@ function PoleZeroMap({ result }: { result: SolverResult }) {
 // ─── Step Response ───────────────────────────────────────────────────────────
 
 function StepResponsePlot({ result }: { result: SolverResult }) {
-  const data = useMemo(() => {
+  const { data, metrics } = useMemo(() => {
+    const { num, den } = result.equivalentTF;
+    const n = den.coeffs.length - 1;
+    if (n === 0) {
+      const gain = num.coeffs[0] / den.coeffs[0];
+      const pts = Array.from({ length: 100 }, (_, i) => ({ t: i * 0.1, y: gain }));
+      return { data: pts, metrics: { finalValue: gain, overshoot: 0, riseTime: 0, settlingTime: 0, peakTime: 0, peakValue: gain } };
+    }
+
+    const an = den.coeffs[n];
+    const a = den.coeffs.map(c => c / an);
+    const b = num.coeffs.map(c => c / an);
+
+    const dt = 0.01;
+    const tMax = 10;
+    const steps = Math.ceil(tMax / dt);
+    const x = new Float64Array(n);
+    const points: { t: number; y: number }[] = [];
+
+    for (let k = 0; k <= steps; k++) {
+      const t = k * dt;
+      let y = 0;
+      for (let i = 0; i < Math.min(b.length, n); i++) {
+        y += (b[i] || 0) * x[i];
+      }
+      if (b.length > n) y += b[n];
+      if (k % 5 === 0) points.push({ t: parseFloat(t.toFixed(3)), y: parseFloat(y.toFixed(6)) });
+
+      const xn = new Float64Array(n);
+      for (let i = 0; i < n - 1; i++) xn[i] = x[i] + dt * x[i + 1];
+      let xdot_last = 1;
+      for (let i = 0; i < n; i++) xdot_last -= a[i] * x[i];
+      xn[n - 1] = x[n - 1] + dt * xdot_last;
+      x.set(xn);
+    }
+
+    const finalValue = points.length > 0 ? points[points.length - 1].y : 0;
+    let peakValue = -Infinity, peakTime = 0;
+    let riseTime = 0, settlingTime = 0;
+    let foundRise10 = false, rise10t = 0;
+
+    for (const p of points) {
+      if (p.y > peakValue) { peakValue = p.y; peakTime = p.t; }
+      if (!foundRise10 && p.y >= 0.1 * finalValue) { rise10t = p.t; foundRise10 = true; }
+      if (foundRise10 && riseTime === 0 && p.y >= 0.9 * finalValue) { riseTime = p.t - rise10t; }
+    }
+
+    const band = 0.02 * Math.abs(finalValue || 1);
+    for (let i = points.length - 1; i >= 0; i--) {
+      if (Math.abs(points[i].y - finalValue) > band) { settlingTime = points[i].t; break; }
+    }
+
+    const overshoot = finalValue !== 0 ? Math.max(0, ((peakValue - finalValue) / Math.abs(finalValue)) * 100) : 0;
+
+    return { data: points, metrics: { finalValue, overshoot, riseTime, settlingTime, peakTime, peakValue } };
+  }, [result]);
+
+  if (data.length === 0) return null;
+
+  const { finalValue, overshoot, riseTime, settlingTime, peakTime } = metrics;
+
+  return (
+    <div className="space-y-2">
+      <ResponsiveContainer width="100%" height={180}>
+        <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+          <XAxis dataKey="t" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "t (s)", position: "insideBottomRight", offset: -5, fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
+          <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
+          <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
+          <ReferenceLine y={finalValue} stroke="hsl(var(--warning))" strokeDasharray="5 3" strokeWidth={1} />
+          <ReferenceLine y={0} stroke="hsl(var(--border))" />
+          <Line type="monotone" dataKey="y" stroke="hsl(var(--primary))" strokeWidth={1.5} dot={false} name="y(t)" />
+        </LineChart>
+      </ResponsiveContainer>
+      <div className="grid grid-cols-4 gap-1 px-1">
+        {[
+          { label: "Overshoot", value: `${overshoot.toFixed(1)}%`, warn: overshoot > 25 },
+          { label: "Rise Time", value: `${riseTime.toFixed(3)}s`, warn: false },
+          { label: "Settling", value: `${settlingTime.toFixed(2)}s`, warn: settlingTime > 8 },
+          { label: "Peak Time", value: `${peakTime.toFixed(3)}s`, warn: false },
+        ].map(m => (
+          <div key={m.label} className="rounded border border-border bg-card/50 px-2 py-1 text-center">
+            <div className="text-[8px] text-muted-foreground uppercase tracking-wider">{m.label}</div>
+            <div className={`text-[11px] font-mono font-semibold ${m.warn ? "text-destructive" : "text-foreground"}`}>{m.value}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
     const { num, den } = result.equivalentTF;
     // Approximate step response via inverse Laplace numerical integration (Euler)
     // For G(s), step response = L^{-1}[G(s)/s]
