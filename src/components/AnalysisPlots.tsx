@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import { SolverResult } from "@/lib/solver";
-import { evaluate } from "@/lib/polynomial";
+import { evaluate, roots } from "@/lib/polynomial";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis,
   CartesianGrid, Tooltip, ReferenceLine,
