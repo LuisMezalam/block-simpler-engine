@@ -277,12 +277,177 @@ function BodePlot({ result }: { result: SolverResult }) {
   );
 }
 
+// ─── Nyquist Plot (SVG) ──────────────────────────────────────────────────────
 
+function NyquistPlot({ result }: { result: SolverResult }) {
+  const points = useMemo(() => {
+    const { num, den } = result.equivalentTF;
+    const pts: { re: number; im: number }[] = [];
+
+    for (let exp = -3; exp <= 4; exp += 0.02) {
+      const w = Math.pow(10, exp);
+      let numRe = 0, numIm = 0;
+      for (let k = 0; k < num.coeffs.length; k++) {
+        const c = num.coeffs[k];
+        const wk = Math.pow(w, k);
+        switch (k % 4) {
+          case 0: numRe += c * wk; break;
+          case 1: numIm += c * wk; break;
+          case 2: numRe -= c * wk; break;
+          case 3: numIm -= c * wk; break;
+        }
+      }
+      let denRe = 0, denIm = 0;
+      for (let k = 0; k < den.coeffs.length; k++) {
+        const c = den.coeffs[k];
+        const wk = Math.pow(w, k);
+        switch (k % 4) {
+          case 0: denRe += c * wk; break;
+          case 1: denIm += c * wk; break;
+          case 2: denRe -= c * wk; break;
+          case 3: denIm -= c * wk; break;
+        }
+      }
+      const dMagSq = denRe * denRe + denIm * denIm;
+      if (dMagSq < 1e-30) continue;
+      const gRe = (numRe * denRe + numIm * denIm) / dMagSq;
+      const gIm = (numIm * denRe - numRe * denIm) / dMagSq;
+      if (Math.abs(gRe) < 1e6 && Math.abs(gIm) < 1e6) {
+        pts.push({ re: gRe, im: gIm });
+      }
+    }
+    return pts;
+  }, [result]);
+
+  if (points.length < 2) {
+    return (
+      <div className="flex items-center justify-center h-full text-xs text-muted-foreground font-mono">
+        Insufficient data for Nyquist plot
+      </div>
+    );
+  }
+
+  // Auto-scale with padding
+  const allRe = points.map(p => p.re);
+  const allIm = points.map(p => p.im);
+  const maxAbs = Math.max(
+    Math.max(...allRe.map(Math.abs), ...allIm.map(Math.abs)),
+    1.5
+  );
+  // Clamp to reasonable range
+  const range = Math.min(maxAbs * 1.2, 50);
+
+  const W = 280, H = 280;
+  const cx = W / 2, cy = H / 2;
+  const scale = (W / 2 - 20) / range;
+
+  const toX = (re: number) => cx + re * scale;
+  const toY = (im: number) => cy - im * scale;
+
+  // Build SVG path for positive freq
+  const pathParts = points.map((p, i) => {
+    const x = toX(Math.max(-range, Math.min(range, p.re)));
+    const y = toY(Math.max(-range, Math.min(range, p.im)));
+    return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+
+  // Mirror for negative freq (conjugate)
+  const mirrorParts = [...points].reverse().map((p, i) => {
+    const x = toX(Math.max(-range, Math.min(range, p.re)));
+    const y = toY(Math.max(-range, Math.min(range, -p.im)));
+    return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+
+  return (
+    <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} className="max-w-[280px] mx-auto">
+      {/* Axes */}
+      <line x1={0} y1={cy} x2={W} y2={cy} stroke="hsl(var(--border))" strokeWidth={1} />
+      <line x1={cx} y1={0} x2={cx} y2={H} stroke="hsl(var(--border))" strokeWidth={1} />
+      <text x={W - 10} y={cy - 4} fill="hsl(var(--muted-foreground))" fontSize={8} fontFamily="monospace">Re</text>
+      <text x={cx + 4} y={10} fill="hsl(var(--muted-foreground))" fontSize={8} fontFamily="monospace">Im</text>
+
+      {/* Unit circle */}
+      <circle cx={cx} cy={cy} r={scale} fill="none" stroke="hsl(var(--border))" strokeWidth={0.5} strokeDasharray="4 2" />
+
+      {/* Critical point -1+j0 */}
+      <circle cx={toX(-1)} cy={toY(0)} r={5} fill="hsl(var(--destructive) / 0.2)" stroke="hsl(var(--destructive))" strokeWidth={2} />
+      <text x={toX(-1) - 2} y={toY(0) + 14} fill="hsl(var(--destructive))" fontSize={8} fontFamily="monospace" textAnchor="middle">−1</text>
+
+      {/* Nyquist contour (positive freq) */}
+      <path d={pathParts.join(" ")} fill="none" stroke="hsl(var(--accent))" strokeWidth={1.5} />
+      {/* Negative freq (mirror) */}
+      <path d={mirrorParts.join(" ")} fill="none" stroke="hsl(var(--accent))" strokeWidth={1} strokeDasharray="4 2" opacity={0.5} />
+
+      {/* Direction arrow at midpoint */}
+      {points.length > 10 && (() => {
+        const mid = Math.floor(points.length / 4);
+        const p = points[mid];
+        const pn = points[mid + 1];
+        if (!pn) return null;
+        const ax = toX(p.re), ay = toY(p.im);
+        const dx = toX(pn.re) - ax, dy = toY(pn.im) - ay;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        if (len < 1) return null;
+        const ux = dx / len, uy = dy / len;
+        return (
+          <polygon
+            points={`${ax + ux * 6},${ay + uy * 6} ${ax - uy * 3},${ay + ux * 3} ${ax + uy * 3},${ay - ux * 3}`}
+            fill="hsl(var(--accent))"
+          />
+        );
+      })()}
+
+      {/* Legend */}
+      <g transform={`translate(8, ${H - 20})`}>
+        <line x1={0} y1={3} x2={12} y2={3} stroke="hsl(var(--accent))" strokeWidth={1.5} />
+        <text x={16} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">G(jω)</text>
+        <circle cx={55} cy={3} r={3} fill="hsl(var(--destructive) / 0.3)" stroke="hsl(var(--destructive))" strokeWidth={1} />
+        <text x={62} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">−1 crit.</text>
+      </g>
+    </svg>
+  );
+}
 
 // ─── Combined Panel ──────────────────────────────────────────────────────────
 
-type PlotTab = "pzmap" | "step" | "bode";
+type PlotTab = "pzmap" | "step" | "bode" | "nyquist";
 
+export function AnalysisPlots({ result }: { result: SolverResult }) {
+  const [tab, setTab] = React.useState<PlotTab>("pzmap");
+
+  const tabs: { id: PlotTab; label: string }[] = [
+    { id: "pzmap", label: "Pole-Zero" },
+    { id: "step", label: "Step" },
+    { id: "bode", label: "Bode" },
+    { id: "nyquist", label: "Nyquist" },
+  ];
+
+  return (
+    <div className="panel-section overflow-hidden">
+      <div className="flex border-b border-border">
+        {tabs.map(t => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`flex-1 py-2 text-[10px] font-semibold tracking-wide uppercase transition-all ${
+              tab === t.id
+                ? "text-primary border-b-2 border-primary bg-primary/5"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div className="p-3 min-h-[220px]">
+        {tab === "pzmap" && <PoleZeroMap result={result} />}
+        {tab === "step" && <StepResponsePlot result={result} />}
+        {tab === "bode" && <BodePlot result={result} />}
+        {tab === "nyquist" && <NyquistPlot result={result} />}
+      </div>
+    </div>
+  );
+}
 export function AnalysisPlots({ result }: { result: SolverResult }) {
   const [tab, setTab] = React.useState<PlotTab>("pzmap");
 
