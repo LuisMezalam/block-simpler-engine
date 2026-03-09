@@ -447,7 +447,7 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
       </div>
     </div>
   );
-    { id: "pzmap", label: "Pole-Zero Map" },
+}
     { id: "step", label: "Step Response" },
     { id: "bode", label: "Bode Plot" },
   ];
