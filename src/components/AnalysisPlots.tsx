@@ -447,8 +447,7 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
       </div>
     </div>
   );
-  const [tab, setTab] = React.useState<PlotTab>("pzmap");
-
+}
   const tabs: { id: PlotTab; label: string }[] = [
     { id: "pzmap", label: "Pole-Zero Map" },
     { id: "step", label: "Step Response" },
