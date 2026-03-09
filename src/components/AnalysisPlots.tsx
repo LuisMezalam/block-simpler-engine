@@ -1,10 +1,12 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useRef, useCallback } from "react";
 import { SolverResult } from "@/lib/solver";
 import { evaluate, roots } from "@/lib/polynomial";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis,
   CartesianGrid, Tooltip, ReferenceLine,
 } from "recharts";
+import html2canvas from "html2canvas";
+import { Download } from "lucide-react";
 
 // ─── Pole-Zero Map (SVG) ─────────────────────────────────────────────────────
 
