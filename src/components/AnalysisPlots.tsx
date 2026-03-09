@@ -659,7 +659,6 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
     </div>
   );
 }
-            onClick={() => setTab(t.id)}
             className={`flex-1 py-2 text-[10px] font-semibold tracking-wide uppercase transition-all ${
               tab === t.id
                 ? "text-primary border-b-2 border-primary bg-primary/5"
