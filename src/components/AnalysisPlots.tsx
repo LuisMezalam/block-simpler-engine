@@ -447,8 +447,6 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
       </div>
     </div>
   );
-}
-  const tabs: { id: PlotTab; label: string }[] = [
     { id: "pzmap", label: "Pole-Zero Map" },
     { id: "step", label: "Step Response" },
     { id: "bode", label: "Bode Plot" },
