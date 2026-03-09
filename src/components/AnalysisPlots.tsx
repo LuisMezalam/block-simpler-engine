@@ -699,7 +699,7 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
       </div>
       <div className="p-3 min-h-[220px]">
         {tab === "pzmap" && <PoleZeroMap result={result} />}
-        {tab === "step" && <StepResponsePlot result={result} />}
+        {tab === "step" && <TimeResponsePlot result={result} />}
         {tab === "bode" && <BodePlot result={result} />}
         {tab === "nyquist" && <NyquistPlot result={result} />}
         {tab === "rlocus" && <RootLocusPlot result={result} />}
