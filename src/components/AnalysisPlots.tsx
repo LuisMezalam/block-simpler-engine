@@ -447,3 +447,4 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
       </div>
     </div>
   );
+}
