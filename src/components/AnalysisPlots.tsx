@@ -241,7 +241,222 @@ function TimeResponsePlot({ result }: { result: SolverResult }) {
 
 
 function BodePlot({ result }: { result: SolverResult }) {
-  const { data, margins } = useMemo(() => {
+  const [showTable, setShowTable] = React.useState(false);
+
+  const { data, margins, keyFreqs } = useMemo(() => {
+    const { num, den } = result.equivalentTF;
+    const points: { w: number; wLog: number; mag: number; phase: number }[] = [];
+
+    let gcLog: number | null = null;
+    let pcLog: number | null = null;
+    let gmDb = Infinity;
+    let pmDeg = Infinity;
+    let prevMagDb = NaN;
+    let prevPhase = NaN;
+    let prevExp = NaN;
+
+    // Evaluate G(jω) helper
+    const evalAt = (w: number) => {
+      let numRe = 0, numIm = 0;
+      for (let k = 0; k < num.coeffs.length; k++) {
+        const c = num.coeffs[k];
+        const wk = Math.pow(w, k);
+        switch (k % 4) {
+          case 0: numRe += c * wk; break;
+          case 1: numIm += c * wk; break;
+          case 2: numRe -= c * wk; break;
+          case 3: numIm -= c * wk; break;
+        }
+      }
+      let denRe = 0, denIm = 0;
+      for (let k = 0; k < den.coeffs.length; k++) {
+        const c = den.coeffs[k];
+        const wk = Math.pow(w, k);
+        switch (k % 4) {
+          case 0: denRe += c * wk; break;
+          case 1: denIm += c * wk; break;
+          case 2: denRe -= c * wk; break;
+          case 3: denIm -= c * wk; break;
+        }
+      }
+      const numMag = Math.sqrt(numRe * numRe + numIm * numIm);
+      const denMag = Math.sqrt(denRe * denRe + denIm * denIm);
+      const magDb = 20 * Math.log10(numMag / (denMag || 1e-30));
+      const numPhase = Math.atan2(numIm, numRe);
+      const denPhase = Math.atan2(denIm, denRe);
+      const phaseDeg = (numPhase - denPhase) * (180 / Math.PI);
+      return { magDb, phaseDeg };
+    };
+
+    for (let exp = -2; exp <= 3; exp += 0.05) {
+      const w = Math.pow(10, exp);
+      const { magDb, phaseDeg } = evalAt(w);
+
+      if (!isNaN(prevMagDb) && gcLog === null) {
+        if ((prevMagDb > 0 && magDb <= 0) || (prevMagDb < 0 && magDb >= 0)) {
+          const t = Math.abs(prevMagDb) / (Math.abs(prevMagDb) + Math.abs(magDb) + 1e-30);
+          gcLog = parseFloat((prevExp + t * (exp - prevExp)).toFixed(2));
+          pmDeg = 180 + (prevPhase + t * (phaseDeg - prevPhase));
+        }
+      }
+
+      if (!isNaN(prevPhase) && pcLog === null) {
+        if ((prevPhase > -180 && phaseDeg <= -180) || (prevPhase < -180 && phaseDeg >= -180)) {
+          const t = Math.abs(prevPhase + 180) / (Math.abs(prevPhase + 180) + Math.abs(phaseDeg + 180) + 1e-30);
+          pcLog = parseFloat((prevExp + t * (exp - prevExp)).toFixed(2));
+          const magAtPc = prevMagDb + t * (magDb - prevMagDb);
+          gmDb = -magAtPc;
+        }
+      }
+
+      points.push({
+        w,
+        wLog: parseFloat(exp.toFixed(2)),
+        mag: parseFloat(magDb.toFixed(2)),
+        phase: parseFloat(phaseDeg.toFixed(2)),
+      });
+
+      prevMagDb = magDb;
+      prevPhase = phaseDeg;
+      prevExp = exp;
+    }
+
+    // Build key frequencies table
+    const freqTable: Array<{ label: string; w: number; mag: number; phase: number }> = [];
+
+    // Corner frequencies from poles
+    const poles = roots(den);
+    poles.forEach((p, i) => {
+      if (!isNaN(p.re)) {
+        const wn = Math.sqrt(p.re * p.re + p.im * p.im);
+        if (wn > 0.01 && wn < 1000) {
+          const { magDb, phaseDeg } = evalAt(wn);
+          freqTable.push({ label: `ωₚ${i + 1}`, w: wn, mag: magDb, phase: phaseDeg });
+        }
+      }
+    });
+
+    // Corner frequencies from zeros
+    const zeros = roots(num);
+    zeros.forEach((z, i) => {
+      if (!isNaN(z.re)) {
+        const wn = Math.sqrt(z.re * z.re + z.im * z.im);
+        if (wn > 0.01 && wn < 1000) {
+          const { magDb, phaseDeg } = evalAt(wn);
+          freqTable.push({ label: `ωᵤ${i + 1}`, w: wn, mag: magDb, phase: phaseDeg });
+        }
+      }
+    });
+
+    // Crossover frequencies
+    if (gcLog !== null) {
+      const wGc = Math.pow(10, gcLog);
+      const { magDb, phaseDeg } = evalAt(wGc);
+      freqTable.push({ label: "ωgc", w: wGc, mag: magDb, phase: phaseDeg });
+    }
+    if (pcLog !== null) {
+      const wPc = Math.pow(10, pcLog);
+      const { magDb, phaseDeg } = evalAt(wPc);
+      freqTable.push({ label: "ωpc", w: wPc, mag: magDb, phase: phaseDeg });
+    }
+
+    // Standard decades
+    [0.1, 1, 10, 100].forEach(w => {
+      const { magDb, phaseDeg } = evalAt(w);
+      freqTable.push({ label: `${w}`, w, mag: magDb, phase: phaseDeg });
+    });
+
+    // Sort by frequency and dedupe
+    freqTable.sort((a, b) => a.w - b.w);
+    const seen = new Set<string>();
+    const unique = freqTable.filter(f => {
+      const key = f.w.toFixed(3);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    return { data: points, margins: { gcLog, pcLog, gmDb, pmDeg }, keyFreqs: unique };
+  }, [result]);
+
+  const { gcLog, pcLog, gmDb, pmDeg } = margins;
+
+  return (
+    <div className="space-y-1">
+      <div className="flex gap-3 px-2 py-1 text-[9px] font-mono text-muted-foreground items-center">
+        <span>GM: <span className={gmDb !== Infinity ? (gmDb > 0 ? "text-green-400" : "text-destructive") : ""}>{gmDb === Infinity ? "∞" : `${gmDb.toFixed(1)} dB`}</span></span>
+        <span>PM: <span className={pmDeg !== Infinity ? (pmDeg > 0 ? "text-green-400" : "text-destructive") : ""}>{pmDeg === Infinity ? "∞" : `${pmDeg.toFixed(1)}°`}</span></span>
+        <button
+          onClick={() => setShowTable(!showTable)}
+          className={`ml-auto text-[8px] px-1.5 py-0.5 rounded ${showTable ? "bg-primary text-primary-foreground" : "bg-muted/50 hover:bg-muted"}`}
+        >
+          {showTable ? "PLOT" : "TABLE"}
+        </button>
+      </div>
+
+      {!showTable ? (
+        <>
+          <ResponsiveContainer width="100%" height={140}>
+            <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis dataKey="wLog" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} hide />
+              <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "dB", angle: -90, position: "insideLeft", fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
+              <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
+              <ReferenceLine y={0} stroke="hsl(var(--warning))" strokeDasharray="5 3" />
+              {pcLog !== null && <ReferenceLine x={pcLog} stroke="hsl(var(--destructive))" strokeDasharray="6 3" strokeWidth={1.5} label={{ value: `GM=${gmDb.toFixed(1)}dB`, position: "top", fontSize: 8, fill: "hsl(var(--destructive))" }} />}
+              {gcLog !== null && <ReferenceLine x={gcLog} stroke="hsl(var(--primary))" strokeDasharray="6 3" strokeWidth={1} />}
+              <Line type="monotone" dataKey="mag" stroke="hsl(var(--accent))" strokeWidth={1.5} dot={false} name="|G(jω)| dB" />
+            </LineChart>
+          </ResponsiveContainer>
+          <ResponsiveContainer width="100%" height={140}>
+            <LineChart data={data} margin={{ top: 0, right: 10, left: 0, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis dataKey="wLog" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "log₁₀(ω)", position: "insideBottomRight", offset: -5, fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
+              <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "deg", angle: -90, position: "insideLeft", fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
+              <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
+              <ReferenceLine y={-180} stroke="hsl(var(--destructive))" strokeDasharray="5 3" />
+              {gcLog !== null && <ReferenceLine x={gcLog} stroke="hsl(var(--primary))" strokeDasharray="6 3" strokeWidth={1.5} label={{ value: `PM=${pmDeg.toFixed(1)}°`, position: "top", fontSize: 8, fill: "hsl(var(--primary))" }} />}
+              {pcLog !== null && <ReferenceLine x={pcLog} stroke="hsl(var(--destructive))" strokeDasharray="6 3" strokeWidth={1} />}
+              <Line type="monotone" dataKey="phase" stroke="hsl(var(--primary))" strokeWidth={1.5} dot={false} name="∠G(jω) °" />
+            </LineChart>
+          </ResponsiveContainer>
+        </>
+      ) : (
+        <div className="overflow-auto max-h-[280px]">
+          <table className="w-full text-[9px] font-mono">
+            <thead className="sticky top-0 bg-background">
+              <tr className="border-b border-border text-muted-foreground">
+                <th className="text-left py-1 px-2">Freq</th>
+                <th className="text-right py-1 px-2">ω (rad/s)</th>
+                <th className="text-right py-1 px-2">|G| (dB)</th>
+                <th className="text-right py-1 px-2">∠G (°)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {keyFreqs.map((f, i) => {
+                const isSpecial = f.label.startsWith("ω");
+                return (
+                  <tr key={i} className={`border-b border-border/50 ${isSpecial ? "bg-primary/5" : ""}`}>
+                    <td className={`py-1 px-2 ${isSpecial ? "text-primary font-semibold" : "text-muted-foreground"}`}>
+                      {f.label}
+                    </td>
+                    <td className="text-right py-1 px-2">{f.w < 10 ? f.w.toFixed(3) : f.w.toFixed(1)}</td>
+                    <td className={`text-right py-1 px-2 ${Math.abs(f.mag) < 1 ? "text-warning" : ""}`}>
+                      {f.mag.toFixed(2)}
+                    </td>
+                    <td className={`text-right py-1 px-2 ${f.phase < -170 ? "text-destructive" : ""}`}>
+                      {f.phase.toFixed(1)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
     const { num, den } = result.equivalentTF;
     const points: { w: number; wLog: number; mag: number; phase: number }[] = [];
 
