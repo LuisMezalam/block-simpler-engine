@@ -1,6 +1,7 @@
-import React, { useMemo, useRef, useCallback } from "react";
+import React, { useMemo, useRef, useCallback, useState } from "react";
 import { SolverResult } from "@/lib/solver";
-import { evaluate, roots } from "@/lib/polynomial";
+import { poly, roots } from "@/lib/polynomial";
+import { Slider } from "@/components/ui/slider";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis,
   CartesianGrid, Tooltip, ReferenceLine,
@@ -594,41 +595,34 @@ function NyquistPlot({ result }: { result: SolverResult }) {
 // ─── Root Locus Plot (SVG) ───────────────────────────────────────────────────
 
 function RootLocusPlot({ result }: { result: SolverResult }) {
-  const { loci, olPoles, olZeros } = useMemo(() => {
+  const [kValue, setKValue] = useState(1);
+  const [kMax, setKMaxState] = useState(100);
+
+  const { loci, olPoles, olZeros, numC, denC } = useMemo(() => {
     const { num, den } = result.equivalentTF;
-    // For root locus we need to find roots of den + K*num = 0 for varying K
-    // Characteristic eq: 1 + K·G(s) = 0  →  den(s) + K·num(s) = 0
+    const numCoeffs = [...num.coeffs];
+    const denCoeffs = [...den.coeffs];
+    const maxLen = Math.max(numCoeffs.length, denCoeffs.length);
+    while (numCoeffs.length < maxLen) numCoeffs.push(0);
+    while (denCoeffs.length < maxLen) denCoeffs.push(0);
 
-    const numC = [...num.coeffs];
-    const denC = [...den.coeffs];
-    const maxLen = Math.max(numC.length, denC.length);
-    while (numC.length < maxLen) numC.push(0);
-    while (denC.length < maxLen) denC.push(0);
-
-    // Open-loop poles (K=0) and zeros
     const olp = roots(den);
     const olz = roots(num);
 
-    // Sweep K from 0 to large value
     const kValues: number[] = [];
-    // Log-spaced from 0.01 to 1000 + a few near zero
     for (let e = -2; e <= 3; e += 0.03) kValues.push(Math.pow(10, e));
     kValues.unshift(0.001, 0.005);
 
     const branches: Array<Array<{ re: number; im: number; k: number }>> = [];
-    // Initialize branches from open-loop poles
     for (let i = 0; i < olp.length; i++) branches.push([]);
 
     for (const K of kValues) {
-      // Build polynomial den + K*num
-      const charCoeffs = denC.map((d, i) => d + K * numC[i]);
-      // Trim trailing zeros
+      const charCoeffs = denCoeffs.map((d, i) => d + K * numCoeffs[i]);
       while (charCoeffs.length > 1 && Math.abs(charCoeffs[charCoeffs.length - 1]) < 1e-15) charCoeffs.pop();
 
       const charPoly = { coeffs: charCoeffs };
       const rts = roots(charPoly);
 
-      // Match roots to nearest branch (greedy assignment)
       const used = new Set<number>();
       const branchOrder: number[] = [];
 
@@ -656,8 +650,15 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
       });
     }
 
-    return { loci: branches, olPoles: olp, olZeros: olz };
+    return { loci: branches, olPoles: olp, olZeros: olz, numC: numCoeffs, denC: denCoeffs };
   }, [result]);
+
+  // Compute closed-loop poles at selected K
+  const clPoles = useMemo(() => {
+    const charCoeffs = denC.map((d, i) => d + kValue * numC[i]);
+    while (charCoeffs.length > 1 && Math.abs(charCoeffs[charCoeffs.length - 1]) < 1e-15) charCoeffs.pop();
+    return roots(poly(charCoeffs)).filter(p => !isNaN(p.re));
+  }, [kValue, numC, denC]);
 
   // Compute bounds
   const allPts = [
@@ -688,7 +689,6 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
   const toX = (re: number) => cx + re * scale;
   const toY = (im: number) => cy - im * scale;
 
-  // Colors for branches
   const branchColors = [
     "hsl(var(--primary))",
     "hsl(var(--accent))",
@@ -698,80 +698,142 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
     "hsl(350, 70%, 55%)",
   ];
 
+  const isStableAtK = clPoles.every(p => p.re <= 1e-8);
+
   return (
-    <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} className="max-w-[280px] mx-auto">
-      {/* Axes */}
-      <line x1={0} y1={cy} x2={W} y2={cy} stroke="hsl(var(--border))" strokeWidth={1} />
-      <line x1={cx} y1={0} x2={cx} y2={H} stroke="hsl(var(--border))" strokeWidth={1} />
-      <text x={W - 10} y={cy - 4} fill="hsl(var(--muted-foreground))" fontSize={8} fontFamily="monospace">Re</text>
-      <text x={cx + 4} y={10} fill="hsl(var(--muted-foreground))" fontSize={8} fontFamily="monospace">Im</text>
+    <div className="space-y-2">
+      <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} className="max-w-[280px] mx-auto">
+        {/* Axes */}
+        <line x1={0} y1={cy} x2={W} y2={cy} stroke="hsl(var(--border))" strokeWidth={1} />
+        <line x1={cx} y1={0} x2={cx} y2={H} stroke="hsl(var(--border))" strokeWidth={1} />
+        <text x={W - 10} y={cy - 4} fill="hsl(var(--muted-foreground))" fontSize={8} fontFamily="monospace">Re</text>
+        <text x={cx + 4} y={10} fill="hsl(var(--muted-foreground))" fontSize={8} fontFamily="monospace">Im</text>
 
-      {/* LHP shading */}
-      <rect x={0} y={0} width={cx} height={H} fill="hsl(var(--primary) / 0.03)" />
+        {/* LHP shading */}
+        <rect x={0} y={0} width={cx} height={H} fill="hsl(var(--primary) / 0.03)" />
 
-      {/* jω axis label */}
-      <line x1={cx} y1={0} x2={cx} y2={H} stroke="hsl(var(--border))" strokeWidth={0.5} strokeDasharray="4 2" />
+        {/* jω axis */}
+        <line x1={cx} y1={0} x2={cx} y2={H} stroke="hsl(var(--border))" strokeWidth={0.5} strokeDasharray="4 2" />
 
-      {/* Root locus branches */}
-      {loci.map((branch, b) => {
-        if (branch.length < 2) return null;
-        const color = branchColors[b % branchColors.length];
-        const d = branch
-          .filter(p => Math.abs(p.re) < maxAbs * 1.5 && Math.abs(p.im) < maxAbs * 1.5)
-          .map((p, i) => `${i === 0 ? "M" : "L"}${toX(p.re).toFixed(1)},${toY(p.im).toFixed(1)}`)
-          .join(" ");
-        return <path key={b} d={d} fill="none" stroke={color} strokeWidth={1.5} opacity={0.8} />;
-      })}
+        {/* Root locus branches */}
+        {loci.map((branch, b) => {
+          if (branch.length < 2) return null;
+          const color = branchColors[b % branchColors.length];
+          const d = branch
+            .filter(p => Math.abs(p.re) < maxAbs * 1.5 && Math.abs(p.im) < maxAbs * 1.5)
+            .map((p, i) => `${i === 0 ? "M" : "L"}${toX(p.re).toFixed(1)},${toY(p.im).toFixed(1)}`)
+            .join(" ");
+          return <path key={b} d={d} fill="none" stroke={color} strokeWidth={1.5} opacity={0.8} />;
+        })}
 
-      {/* Open-loop poles (×) */}
-      {olPoles.filter(p => !isNaN(p.re)).map((p, i) => {
-        const x = toX(p.re), y = toY(p.im);
-        return (
-          <g key={`p${i}`}>
-            <line x1={x - 5} y1={y - 5} x2={x + 5} y2={y + 5} stroke="hsl(var(--destructive))" strokeWidth={2} />
-            <line x1={x - 5} y1={y + 5} x2={x + 5} y2={y - 5} stroke="hsl(var(--destructive))" strokeWidth={2} />
-          </g>
-        );
-      })}
+        {/* Open-loop poles (×) */}
+        {olPoles.filter(p => !isNaN(p.re)).map((p, i) => {
+          const x = toX(p.re), y = toY(p.im);
+          return (
+            <g key={`p${i}`}>
+              <line x1={x - 5} y1={y - 5} x2={x + 5} y2={y + 5} stroke="hsl(var(--destructive))" strokeWidth={2} />
+              <line x1={x - 5} y1={y + 5} x2={x + 5} y2={y - 5} stroke="hsl(var(--destructive))" strokeWidth={2} />
+            </g>
+          );
+        })}
 
-      {/* Open-loop zeros (○) */}
-      {olZeros.filter(z => !isNaN(z.re)).map((z, i) => {
-        const x = toX(z.re), y = toY(z.im);
-        return (
-          <circle key={`z${i}`} cx={x} cy={y} r={5}
-            fill="none" stroke="hsl(var(--accent))" strokeWidth={2} />
-        );
-      })}
+        {/* Open-loop zeros (○) */}
+        {olZeros.filter(z => !isNaN(z.re)).map((z, i) => {
+          const x = toX(z.re), y = toY(z.im);
+          return (
+            <circle key={`z${i}`} cx={x} cy={y} r={5}
+              fill="none" stroke="hsl(var(--accent))" strokeWidth={2} />
+          );
+        })}
 
-      {/* Direction arrows on branches */}
-      {loci.map((branch, b) => {
-        if (branch.length < 10) return null;
-        const mid = Math.floor(branch.length / 3);
-        const p0 = branch[mid], p1 = branch[mid + 1];
-        if (!p0 || !p1) return null;
-        const ax = toX(p0.re), ay = toY(p0.im);
-        const dx = toX(p1.re) - ax, dy = toY(p1.im) - ay;
-        const len = Math.sqrt(dx * dx + dy * dy);
-        if (len < 1) return null;
-        const ux = dx / len, uy = dy / len;
-        return (
-          <polygon key={`a${b}`}
-            points={`${ax + ux * 6},${ay + uy * 6} ${ax - uy * 3},${ay + ux * 3} ${ax + uy * 3},${ay - ux * 3}`}
-            fill={branchColors[b % branchColors.length]}
-          />
-        );
-      })}
+        {/* Closed-loop poles at K (◆) */}
+        {clPoles.map((p, i) => {
+          const x = toX(p.re), y = toY(p.im);
+          const inBounds = Math.abs(p.re) < maxAbs * 1.5 && Math.abs(p.im) < maxAbs * 1.5;
+          if (!inBounds) return null;
+          return (
+            <g key={`cl${i}`}>
+              <circle cx={x} cy={y} r={7} fill="hsl(var(--warning) / 0.2)" stroke="hsl(var(--warning))" strokeWidth={2} />
+              <circle cx={x} cy={y} r={2.5} fill="hsl(var(--warning))" />
+            </g>
+          );
+        })}
 
-      {/* Legend */}
-      <g transform={`translate(6, ${H - 20})`}>
-        <line x1={0} y1={0} x2={6} y2={6} stroke="hsl(var(--destructive))" strokeWidth={1.5} />
-        <line x1={6} y1={0} x2={0} y2={6} stroke="hsl(var(--destructive))" strokeWidth={1.5} />
-        <text x={10} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">OL Poles</text>
-        <circle cx={60} cy={3} r={3} fill="none" stroke="hsl(var(--accent))" strokeWidth={1.5} />
-        <text x={66} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">OL Zeros</text>
-        <text x={110} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">K: 0→∞</text>
-      </g>
-    </svg>
+        {/* Direction arrows on branches */}
+        {loci.map((branch, b) => {
+          if (branch.length < 10) return null;
+          const mid = Math.floor(branch.length / 3);
+          const p0 = branch[mid], p1 = branch[mid + 1];
+          if (!p0 || !p1) return null;
+          const ax = toX(p0.re), ay = toY(p0.im);
+          const dx = toX(p1.re) - ax, dy = toY(p1.im) - ay;
+          const len = Math.sqrt(dx * dx + dy * dy);
+          if (len < 1) return null;
+          const ux = dx / len, uy = dy / len;
+          return (
+            <polygon key={`a${b}`}
+              points={`${ax + ux * 6},${ay + uy * 6} ${ax - uy * 3},${ay + ux * 3} ${ax + uy * 3},${ay - ux * 3}`}
+              fill={branchColors[b % branchColors.length]}
+            />
+          );
+        })}
+
+        {/* Legend */}
+        <g transform={`translate(6, ${H - 20})`}>
+          <line x1={0} y1={0} x2={6} y2={6} stroke="hsl(var(--destructive))" strokeWidth={1.5} />
+          <line x1={6} y1={0} x2={0} y2={6} stroke="hsl(var(--destructive))" strokeWidth={1.5} />
+          <text x={10} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">OL Poles</text>
+          <circle cx={55} cy={3} r={3} fill="none" stroke="hsl(var(--accent))" strokeWidth={1.5} />
+          <text x={61} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Zeros</text>
+          <circle cx={90} cy={3} r={4} fill="hsl(var(--warning) / 0.3)" stroke="hsl(var(--warning))" strokeWidth={1.5} />
+          <text x={97} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">K={kValue.toFixed(1)}</text>
+        </g>
+      </svg>
+
+      {/* K Slider */}
+      <div className="px-2 space-y-1">
+        <div className="flex items-center justify-between text-[9px] font-mono">
+          <span className="text-muted-foreground">Gain K</span>
+          <span className={`font-semibold ${isStableAtK ? "text-green-400" : "text-destructive"}`}>
+            K = {kValue.toFixed(2)} · {isStableAtK ? "Stable" : "Unstable"}
+          </span>
+        </div>
+        <Slider
+          value={[kValue]}
+          onValueChange={([v]) => setKValue(v)}
+          min={0}
+          max={kMax}
+          step={kMax / 500}
+          className="w-full"
+        />
+        <div className="flex items-center justify-between text-[8px] text-muted-foreground font-mono">
+          <span>0</span>
+          <div className="flex gap-1">
+            {[10, 50, 100, 500, 1000].map(m => (
+              <button
+                key={m}
+                onClick={() => { setKMaxState(m); if (kValue > m) setKValue(m); }}
+                className={`px-1 py-0.5 rounded ${kMax === m ? "bg-primary/20 text-primary" : "hover:text-foreground"}`}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+          <span>{kMax}</span>
+        </div>
+        {/* CL pole positions */}
+        {clPoles.length > 0 && (
+          <div className="text-[8px] font-mono text-muted-foreground space-y-0.5 pt-1 border-t border-border/50">
+            <span className="text-[7px] uppercase tracking-wider">CL Poles at K={kValue.toFixed(1)}:</span>
+            {clPoles.map((p, i) => (
+              <div key={i} className={p.re > 1e-8 ? "text-destructive" : "text-foreground/80"}>
+                s{i + 1} = {p.re.toFixed(3)}{Math.abs(p.im) > 1e-10 ? ` ± j${Math.abs(p.im).toFixed(3)}` : ""}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
