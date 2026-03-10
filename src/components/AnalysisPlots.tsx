@@ -1,6 +1,7 @@
-import React, { useMemo, useRef, useCallback } from "react";
+import React, { useMemo, useRef, useCallback, useState } from "react";
 import { SolverResult } from "@/lib/solver";
-import { evaluate, roots } from "@/lib/polynomial";
+import { poly, roots } from "@/lib/polynomial";
+import { Slider } from "@/components/ui/slider";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis,
   CartesianGrid, Tooltip, ReferenceLine,
