@@ -724,6 +724,30 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
     return points;
   }, [numC, denC, olPoles, olZeros]);
 
+  // Compute asymptotes: angles and centroid (Ogata §6-3, Nise §8.2)
+  // n = #poles, m = #zeros, asymptotes exist when n > m
+  // Centroid σ_a = (Σ poles - Σ zeros) / (n - m)
+  // Angles θ_k = (2k+1)π / (n-m), k = 0,1,...,n-m-1
+  const asymptotes = useMemo(() => {
+    const realPoles = olPoles.filter(p => !isNaN(p.re));
+    const realZeros = olZeros.filter(z => !isNaN(z.re));
+    const n = realPoles.length;
+    const m = realZeros.length;
+    const diff = n - m;
+    if (diff <= 0) return null;
+
+    const sumPoles = realPoles.reduce((s, p) => s + p.re, 0);
+    const sumZeros = realZeros.reduce((s, z) => s + z.re, 0);
+    const centroid = (sumPoles - sumZeros) / diff;
+
+    const angles: number[] = [];
+    for (let k = 0; k < diff; k++) {
+      angles.push(((2 * k + 1) * Math.PI) / diff);
+    }
+
+    return { centroid, angles, n, m };
+  }, [olPoles, olZeros]);
+
   // Compute bounds
   const allPts = [
     ...olPoles, ...olZeros,
@@ -778,6 +802,39 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
 
         {/* jω axis */}
         <line x1={cx} y1={0} x2={cx} y2={H} stroke="hsl(var(--border))" strokeWidth={0.5} strokeDasharray="4 2" />
+
+        {/* Asymptote lines and centroid */}
+        {asymptotes && (() => {
+          const { centroid, angles } = asymptotes;
+          const cxA = toX(centroid);
+          const cyA = toY(0);
+          const lineLen = maxAbs * 2.5; // extend well beyond visible area
+          return (
+            <g>
+              {/* Asymptote lines */}
+              {angles.map((angle, i) => {
+                const dx = Math.cos(angle) * lineLen * scale;
+                const dy = -Math.sin(angle) * lineLen * scale; // negate for SVG coords
+                return (
+                  <line
+                    key={`asym${i}`}
+                    x1={cxA}
+                    y1={cyA}
+                    x2={cxA + dx}
+                    y2={cyA + dy}
+                    stroke="hsl(var(--muted-foreground) / 0.35)"
+                    strokeWidth={1}
+                    strokeDasharray="6 3"
+                  />
+                );
+              })}
+              {/* Centroid marker */}
+              <line x1={cxA - 5} y1={cyA} x2={cxA + 5} y2={cyA} stroke="hsl(45, 90%, 55%)" strokeWidth={2} />
+              <line x1={cxA} y1={cyA - 5} x2={cxA} y2={cyA + 5} stroke="hsl(45, 90%, 55%)" strokeWidth={2} />
+              <title>Centroid σ_a = {centroid.toFixed(3)}</title>
+            </g>
+          );
+        })()}
 
         {/* Root locus branches */}
         {loci.map((branch, b) => {
@@ -861,17 +918,23 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
         })}
 
         {/* Legend */}
-        <g transform={`translate(6, ${H - 28})`}>
+        <g transform={`translate(6, ${H - 36})`}>
           <line x1={0} y1={0} x2={6} y2={6} stroke="hsl(var(--destructive))" strokeWidth={1.5} />
           <line x1={6} y1={0} x2={0} y2={6} stroke="hsl(var(--destructive))" strokeWidth={1.5} />
-          <text x={10} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">OL Poles</text>
-          <circle cx={55} cy={3} r={3} fill="none" stroke="hsl(var(--accent))" strokeWidth={1.5} />
-          <text x={61} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Zeros</text>
-          <circle cx={90} cy={3} r={4} fill="hsl(var(--warning) / 0.3)" stroke="hsl(var(--warning))" strokeWidth={1.5} />
-          <text x={97} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">K={kValue.toFixed(1)}</text>
-          {/* Breakaway legend */}
-          <polygon points="140,0 144,3 140,6 136,3" fill="hsl(320, 80%, 60% / 0.3)" stroke="hsl(320, 80%, 60%)" strokeWidth={1} />
-          <text x={148} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Break</text>
+          <text x={10} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Poles</text>
+          <circle cx={42} cy={3} r={3} fill="none" stroke="hsl(var(--accent))" strokeWidth={1.5} />
+          <text x={48} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Zeros</text>
+          <circle cx={78} cy={3} r={4} fill="hsl(var(--warning) / 0.3)" stroke="hsl(var(--warning))" strokeWidth={1.5} />
+          <text x={85} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">K</text>
+          <polygon points="100,0 104,3 100,6 96,3" fill="hsl(320, 80%, 60% / 0.3)" stroke="hsl(320, 80%, 60%)" strokeWidth={1} />
+          <text x={108} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Brk</text>
+        </g>
+        <g transform={`translate(6, ${H - 24})`}>
+          <line x1={0} y1={0} x2={8} y2={0} stroke="hsl(var(--muted-foreground) / 0.35)" strokeWidth={1} strokeDasharray="3 2" />
+          <text x={12} y={3} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Asymptotes</text>
+          <line x1={72} y1={-3} x2={72} y2={3} stroke="hsl(45, 90%, 55%)" strokeWidth={1.5} />
+          <line x1={69} y1={0} x2={75} y2={0} stroke="hsl(45, 90%, 55%)" strokeWidth={1.5} />
+          <text x={79} y={3} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Centroid</text>
         </g>
       </svg>
 
@@ -943,6 +1006,18 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
                 σ = {bp.re.toFixed(3)}
               </div>
             ))}
+          </div>
+        )}
+        {/* Asymptote info */}
+        {asymptotes && (
+          <div className="text-[8px] font-mono text-muted-foreground space-y-0.5 pt-1 border-t border-border/50">
+            <span className="text-[7px] uppercase tracking-wider">Asymptotes ({asymptotes.n}P − {asymptotes.m}Z = {asymptotes.n - asymptotes.m}):</span>
+            <div className="text-foreground/80">
+              σ_a = {asymptotes.centroid.toFixed(3)}
+            </div>
+            <div className="text-foreground/80">
+              θ = {asymptotes.angles.map(a => `${(a * 180 / Math.PI).toFixed(0)}°`).join(", ")}
+            </div>
           </div>
         )}
       </div>
