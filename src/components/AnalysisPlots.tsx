@@ -4,7 +4,8 @@ import { poly, roots, evaluate } from "@/lib/polynomial";
 import { Slider } from "@/components/ui/slider";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis,
-  CartesianGrid, Tooltip, ReferenceLine,
+  CartesianGrid, Tooltip, ReferenceLine, ReferenceDot,
+  ReferenceArea,
 } from "recharts";
 import html2canvas from "html2canvas";
 import { Download } from "lucide-react";
