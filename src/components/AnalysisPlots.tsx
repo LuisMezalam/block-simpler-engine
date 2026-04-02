@@ -660,6 +660,70 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
     return roots(poly(charCoeffs)).filter(p => !isNaN(p.re));
   }, [kValue, numC, denC]);
 
+  // Compute breakaway / break-in points numerically
+  // Breakaway points occur where dK/dσ = 0 on the real axis, with K(σ) = -D(σ)/N(σ) > 0
+  const breakawayPoints = useMemo(() => {
+    const num = { coeffs: [...numC] };
+    const den = { coeffs: [...denC] };
+    const points: Array<{ re: number; type: "breakaway" | "breakin" }> = [];
+
+    // Sample the real axis finely
+    const bound = Math.max(
+      ...olPoles.filter(p => !isNaN(p.re)).map(p => Math.abs(p.re)),
+      ...olZeros.filter(z => !isNaN(z.re)).map(z => Math.abs(z.re)),
+      2
+    ) + 2;
+
+    const step = 0.005;
+    const kOfSigma = (sigma: number): number => {
+      const n = evaluate(num, sigma);
+      if (Math.abs(n) < 1e-12) return NaN;
+      return -evaluate(den, sigma) / n;
+    };
+
+    // Find local extrema of K(σ) where K > 0
+    let prevK = kOfSigma(-bound);
+    let prevSlope = 0;
+    const DELTA = step * 0.5;
+
+    for (let sigma = -bound + step; sigma <= bound; sigma += step) {
+      const k = kOfSigma(sigma);
+      if (isNaN(k) || isNaN(prevK)) { prevK = k; continue; }
+
+      const slope = k - prevK;
+      // Detect sign change in slope (extremum)
+      if (prevSlope !== 0 && slope * prevSlope < 0) {
+        // Refine with bisection
+        let lo = sigma - step, hi = sigma;
+        for (let iter = 0; iter < 20; iter++) {
+          const mid = (lo + hi) / 2;
+          const kMid = kOfSigma(mid);
+          const kMidPlus = kOfSigma(mid + DELTA * 0.01);
+          if (isNaN(kMid) || isNaN(kMidPlus)) break;
+          if ((kMidPlus - kMid) * prevSlope > 0) lo = mid; else hi = mid;
+        }
+        const bpSigma = (lo + hi) / 2;
+        const bpK = kOfSigma(bpSigma);
+
+        // Only include if K > 0 (valid gain) and point is on the real-axis root locus
+        if (!isNaN(bpK) && bpK > 0.001) {
+          // Breakaway: branches leave real axis (local max of K)
+          // Break-in: branches return to real axis (local min of K)
+          const type = prevSlope > 0 ? "breakaway" : "breakin";
+          // Check it's not too close to a pole or zero
+          const nearPole = olPoles.some(p => Math.abs(p.re - bpSigma) < 0.05 && Math.abs(p.im) < 0.05);
+          const nearZero = olZeros.some(z => Math.abs(z.re - bpSigma) < 0.05 && Math.abs(z.im) < 0.05);
+          if (!nearPole && !nearZero) {
+            points.push({ re: bpSigma, type });
+          }
+        }
+      }
+      prevSlope = slope;
+      prevK = k;
+    }
+    return points;
+  }, [numC, denC, olPoles, olZeros]);
+
   // Compute bounds
   const allPts = [
     ...olPoles, ...olZeros,
