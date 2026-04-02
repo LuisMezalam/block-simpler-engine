@@ -792,11 +792,25 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
 
       {/* K Slider */}
       <div className="px-2 space-y-1">
-        <div className="flex items-center justify-between text-[9px] font-mono">
+        <div className="flex items-center justify-between text-[9px] font-mono gap-2">
           <span className="text-muted-foreground">Gain K</span>
-          <span className={`font-semibold ${isStableAtK ? "text-green-400" : "text-destructive"}`}>
-            K = {kValue.toFixed(2)} · {isStableAtK ? "Stable" : "Unstable"}
-          </span>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="number"
+              value={kValue}
+              min={0}
+              max={kMax}
+              step={kMax / 500}
+              onChange={e => {
+                const v = parseFloat(e.target.value);
+                if (!isNaN(v) && v >= 0) setKValue(Math.min(v, kMax));
+              }}
+              className="w-16 text-[10px] font-mono bg-secondary/70 border border-border rounded px-1 py-0.5 text-foreground text-right focus:outline-none focus:border-primary"
+            />
+            <span className={`font-semibold ${isStableAtK ? "text-green-400" : "text-destructive"}`}>
+              {isStableAtK ? "✓ Stable" : "✗ Unstable"}
+            </span>
+          </div>
         </div>
         <Slider
           value={[kValue]}
