@@ -823,6 +823,24 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
           );
         })}
 
+        {/* Breakaway / Break-in points (◆) */}
+        {breakawayPoints.map((bp, i) => {
+          const x = toX(bp.re), y = toY(0);
+          const color = bp.type === "breakaway" ? "hsl(320, 80%, 60%)" : "hsl(180, 80%, 50%)";
+          const size = 5;
+          return (
+            <g key={`bp${i}`}>
+              <polygon
+                points={`${x},${y - size} ${x + size},${y} ${x},${y + size} ${x - size},${y}`}
+                fill={`${color.replace(")", " / 0.3)")}`}
+                stroke={color}
+                strokeWidth={1.5}
+              />
+              <title>{bp.type === "breakaway" ? "Breakaway" : "Break-in"} at σ = {bp.re.toFixed(3)}</title>
+            </g>
+          );
+        })}
+
         {/* Direction arrows on branches */}
         {loci.map((branch, b) => {
           if (branch.length < 10) return null;
@@ -843,7 +861,7 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
         })}
 
         {/* Legend */}
-        <g transform={`translate(6, ${H - 20})`}>
+        <g transform={`translate(6, ${H - 28})`}>
           <line x1={0} y1={0} x2={6} y2={6} stroke="hsl(var(--destructive))" strokeWidth={1.5} />
           <line x1={6} y1={0} x2={0} y2={6} stroke="hsl(var(--destructive))" strokeWidth={1.5} />
           <text x={10} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">OL Poles</text>
@@ -851,6 +869,9 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
           <text x={61} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Zeros</text>
           <circle cx={90} cy={3} r={4} fill="hsl(var(--warning) / 0.3)" stroke="hsl(var(--warning))" strokeWidth={1.5} />
           <text x={97} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">K={kValue.toFixed(1)}</text>
+          {/* Breakaway legend */}
+          <polygon points="140,0 144,3 140,6 136,3" fill="hsl(320, 80%, 60% / 0.3)" stroke="hsl(320, 80%, 60%)" strokeWidth={1} />
+          <text x={148} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Break</text>
         </g>
       </svg>
 
