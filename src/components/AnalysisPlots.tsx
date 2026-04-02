@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useCallback, useState } from "react";
 import { SolverResult } from "@/lib/solver";
-import { poly, roots } from "@/lib/polynomial";
+import { poly, roots, evaluate } from "@/lib/polynomial";
 import { Slider } from "@/components/ui/slider";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis,
@@ -660,6 +660,70 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
     return roots(poly(charCoeffs)).filter(p => !isNaN(p.re));
   }, [kValue, numC, denC]);
 
+  // Compute breakaway / break-in points numerically
+  // Breakaway points occur where dK/dσ = 0 on the real axis, with K(σ) = -D(σ)/N(σ) > 0
+  const breakawayPoints = useMemo(() => {
+    const num = { coeffs: [...numC] };
+    const den = { coeffs: [...denC] };
+    const points: Array<{ re: number; type: "breakaway" | "breakin" }> = [];
+
+    // Sample the real axis finely
+    const bound = Math.max(
+      ...olPoles.filter(p => !isNaN(p.re)).map(p => Math.abs(p.re)),
+      ...olZeros.filter(z => !isNaN(z.re)).map(z => Math.abs(z.re)),
+      2
+    ) + 2;
+
+    const step = 0.005;
+    const kOfSigma = (sigma: number): number => {
+      const n = evaluate(num, sigma);
+      if (Math.abs(n) < 1e-12) return NaN;
+      return -evaluate(den, sigma) / n;
+    };
+
+    // Find local extrema of K(σ) where K > 0
+    let prevK = kOfSigma(-bound);
+    let prevSlope = 0;
+    const DELTA = step * 0.5;
+
+    for (let sigma = -bound + step; sigma <= bound; sigma += step) {
+      const k = kOfSigma(sigma);
+      if (isNaN(k) || isNaN(prevK)) { prevK = k; continue; }
+
+      const slope = k - prevK;
+      // Detect sign change in slope (extremum)
+      if (prevSlope !== 0 && slope * prevSlope < 0) {
+        // Refine with bisection
+        let lo = sigma - step, hi = sigma;
+        for (let iter = 0; iter < 20; iter++) {
+          const mid = (lo + hi) / 2;
+          const kMid = kOfSigma(mid);
+          const kMidPlus = kOfSigma(mid + DELTA * 0.01);
+          if (isNaN(kMid) || isNaN(kMidPlus)) break;
+          if ((kMidPlus - kMid) * prevSlope > 0) lo = mid; else hi = mid;
+        }
+        const bpSigma = (lo + hi) / 2;
+        const bpK = kOfSigma(bpSigma);
+
+        // Only include if K > 0 (valid gain) and point is on the real-axis root locus
+        if (!isNaN(bpK) && bpK > 0.001) {
+          // Breakaway: branches leave real axis (local max of K)
+          // Break-in: branches return to real axis (local min of K)
+          const type = prevSlope > 0 ? "breakaway" : "breakin";
+          // Check it's not too close to a pole or zero
+          const nearPole = olPoles.some(p => Math.abs(p.re - bpSigma) < 0.05 && Math.abs(p.im) < 0.05);
+          const nearZero = olZeros.some(z => Math.abs(z.re - bpSigma) < 0.05 && Math.abs(z.im) < 0.05);
+          if (!nearPole && !nearZero) {
+            points.push({ re: bpSigma, type });
+          }
+        }
+      }
+      prevSlope = slope;
+      prevK = k;
+    }
+    return points;
+  }, [numC, denC, olPoles, olZeros]);
+
   // Compute bounds
   const allPts = [
     ...olPoles, ...olZeros,
@@ -759,6 +823,24 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
           );
         })}
 
+        {/* Breakaway / Break-in points (◆) */}
+        {breakawayPoints.map((bp, i) => {
+          const x = toX(bp.re), y = toY(0);
+          const color = bp.type === "breakaway" ? "hsl(320, 80%, 60%)" : "hsl(180, 80%, 50%)";
+          const size = 5;
+          return (
+            <g key={`bp${i}`}>
+              <polygon
+                points={`${x},${y - size} ${x + size},${y} ${x},${y + size} ${x - size},${y}`}
+                fill={`${color.replace(")", " / 0.3)")}`}
+                stroke={color}
+                strokeWidth={1.5}
+              />
+              <title>{bp.type === "breakaway" ? "Breakaway" : "Break-in"} at σ = {bp.re.toFixed(3)}</title>
+            </g>
+          );
+        })}
+
         {/* Direction arrows on branches */}
         {loci.map((branch, b) => {
           if (branch.length < 10) return null;
@@ -779,7 +861,7 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
         })}
 
         {/* Legend */}
-        <g transform={`translate(6, ${H - 20})`}>
+        <g transform={`translate(6, ${H - 28})`}>
           <line x1={0} y1={0} x2={6} y2={6} stroke="hsl(var(--destructive))" strokeWidth={1.5} />
           <line x1={6} y1={0} x2={0} y2={6} stroke="hsl(var(--destructive))" strokeWidth={1.5} />
           <text x={10} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">OL Poles</text>
@@ -787,6 +869,9 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
           <text x={61} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Zeros</text>
           <circle cx={90} cy={3} r={4} fill="hsl(var(--warning) / 0.3)" stroke="hsl(var(--warning))" strokeWidth={1.5} />
           <text x={97} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">K={kValue.toFixed(1)}</text>
+          {/* Breakaway legend */}
+          <polygon points="140,0 144,3 140,6 136,3" fill="hsl(320, 80%, 60% / 0.3)" stroke="hsl(320, 80%, 60%)" strokeWidth={1} />
+          <text x={148} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Break</text>
         </g>
       </svg>
 
@@ -842,6 +927,20 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
             {clPoles.map((p, i) => (
               <div key={i} className={p.re > 1e-8 ? "text-destructive" : "text-foreground/80"}>
                 s{i + 1} = {p.re.toFixed(3)}{Math.abs(p.im) > 1e-10 ? ` ± j${Math.abs(p.im).toFixed(3)}` : ""}
+              </div>
+            ))}
+          </div>
+        )}
+        {/* Breakaway/Break-in points */}
+        {breakawayPoints.length > 0 && (
+          <div className="text-[8px] font-mono text-muted-foreground space-y-0.5 pt-1 border-t border-border/50">
+            <span className="text-[7px] uppercase tracking-wider">Breakaway/Break-in:</span>
+            {breakawayPoints.map((bp, i) => (
+              <div key={i} className="text-foreground/80">
+                <span style={{ color: bp.type === "breakaway" ? "hsl(320, 80%, 60%)" : "hsl(180, 80%, 50%)" }}>
+                  {bp.type === "breakaway" ? "◆ Away" : "◆ In"}
+                </span>{" "}
+                σ = {bp.re.toFixed(3)}
               </div>
             ))}
           </div>
