@@ -803,6 +803,39 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
         {/* jω axis */}
         <line x1={cx} y1={0} x2={cx} y2={H} stroke="hsl(var(--border))" strokeWidth={0.5} strokeDasharray="4 2" />
 
+        {/* Asymptote lines and centroid */}
+        {asymptotes && (() => {
+          const { centroid, angles } = asymptotes;
+          const cxA = toX(centroid);
+          const cyA = toY(0);
+          const lineLen = maxAbs * 2.5; // extend well beyond visible area
+          return (
+            <g>
+              {/* Asymptote lines */}
+              {angles.map((angle, i) => {
+                const dx = Math.cos(angle) * lineLen * scale;
+                const dy = -Math.sin(angle) * lineLen * scale; // negate for SVG coords
+                return (
+                  <line
+                    key={`asym${i}`}
+                    x1={cxA}
+                    y1={cyA}
+                    x2={cxA + dx}
+                    y2={cyA + dy}
+                    stroke="hsl(var(--muted-foreground) / 0.35)"
+                    strokeWidth={1}
+                    strokeDasharray="6 3"
+                  />
+                );
+              })}
+              {/* Centroid marker */}
+              <line x1={cxA - 5} y1={cyA} x2={cxA + 5} y2={cyA} stroke="hsl(45, 90%, 55%)" strokeWidth={2} />
+              <line x1={cxA} y1={cyA - 5} x2={cxA} y2={cyA + 5} stroke="hsl(45, 90%, 55%)" strokeWidth={2} />
+              <title>Centroid σ_a = {centroid.toFixed(3)}</title>
+            </g>
+          );
+        })()}
+
         {/* Root locus branches */}
         {loci.map((branch, b) => {
           if (branch.length < 2) return null;
