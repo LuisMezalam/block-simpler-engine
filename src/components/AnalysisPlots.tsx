@@ -4,7 +4,8 @@ import { poly, roots, evaluate } from "@/lib/polynomial";
 import { Slider } from "@/components/ui/slider";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis,
-  CartesianGrid, Tooltip, ReferenceLine,
+  CartesianGrid, Tooltip, ReferenceLine, ReferenceDot,
+  ReferenceArea,
 } from "recharts";
 import html2canvas from "html2canvas";
 import { Download } from "lucide-react";
@@ -252,6 +253,8 @@ function BodePlot({ result }: { result: SolverResult }) {
     let pcLog: number | null = null;
     let gmDb = Infinity;
     let pmDeg = Infinity;
+    let magAtPcDb = 0; // magnitude (dB) at phase crossover
+    let phaseAtGcDeg = 0; // phase (deg) at gain crossover
     let prevMagDb = NaN;
     let prevPhase = NaN;
     let prevExp = NaN;
@@ -297,7 +300,8 @@ function BodePlot({ result }: { result: SolverResult }) {
         if ((prevMagDb > 0 && magDb <= 0) || (prevMagDb < 0 && magDb >= 0)) {
           const t = Math.abs(prevMagDb) / (Math.abs(prevMagDb) + Math.abs(magDb) + 1e-30);
           gcLog = parseFloat((prevExp + t * (exp - prevExp)).toFixed(2));
-          pmDeg = 180 + (prevPhase + t * (phaseDeg - prevPhase));
+          phaseAtGcDeg = prevPhase + t * (phaseDeg - prevPhase);
+          pmDeg = 180 + phaseAtGcDeg;
         }
       }
 
@@ -305,8 +309,8 @@ function BodePlot({ result }: { result: SolverResult }) {
         if ((prevPhase > -180 && phaseDeg <= -180) || (prevPhase < -180 && phaseDeg >= -180)) {
           const t = Math.abs(prevPhase + 180) / (Math.abs(prevPhase + 180) + Math.abs(phaseDeg + 180) + 1e-30);
           pcLog = parseFloat((prevExp + t * (exp - prevExp)).toFixed(2));
-          const magAtPc = prevMagDb + t * (magDb - prevMagDb);
-          gmDb = -magAtPc;
+          magAtPcDb = prevMagDb + t * (magDb - prevMagDb);
+          gmDb = -magAtPcDb;
         }
       }
 
@@ -377,16 +381,18 @@ function BodePlot({ result }: { result: SolverResult }) {
       return true;
     });
 
-    return { data: points, margins: { gcLog, pcLog, gmDb, pmDeg }, keyFreqs: unique };
+    return { data: points, margins: { gcLog, pcLog, gmDb, pmDeg, magAtPcDb, phaseAtGcDeg }, keyFreqs: unique };
   }, [result]);
 
-  const { gcLog, pcLog, gmDb, pmDeg } = margins;
+  const { gcLog, pcLog, gmDb, pmDeg, magAtPcDb, phaseAtGcDeg } = margins;
 
   return (
     <div className="space-y-1">
       <div className="flex gap-3 px-2 py-1 text-[9px] font-mono text-muted-foreground items-center">
         <span>GM: <span className={gmDb !== Infinity ? (gmDb > 0 ? "text-green-400" : "text-destructive") : ""}>{gmDb === Infinity ? "∞" : `${gmDb.toFixed(1)} dB`}</span></span>
         <span>PM: <span className={pmDeg !== Infinity ? (pmDeg > 0 ? "text-green-400" : "text-destructive") : ""}>{pmDeg === Infinity ? "∞" : `${pmDeg.toFixed(1)}°`}</span></span>
+        {gcLog !== null && <span>ωgc: <span className="text-foreground">{Math.pow(10, gcLog).toFixed(2)}</span></span>}
+        {pcLog !== null && <span>ωpc: <span className="text-foreground">{Math.pow(10, pcLog).toFixed(2)}</span></span>}
         <button
           onClick={() => setShowTable(!showTable)}
           className={`ml-auto text-[8px] px-1.5 py-0.5 rounded ${showTable ? "bg-primary text-primary-foreground" : "bg-muted/50 hover:bg-muted"}`}
@@ -397,6 +403,7 @@ function BodePlot({ result }: { result: SolverResult }) {
 
       {!showTable ? (
         <>
+          {/* Magnitude plot */}
           <ResponsiveContainer width="100%" height={140}>
             <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -404,11 +411,38 @@ function BodePlot({ result }: { result: SolverResult }) {
               <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "dB", angle: -90, position: "insideLeft", fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
               <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
               <ReferenceLine y={0} stroke="hsl(var(--warning))" strokeDasharray="5 3" />
-              {pcLog !== null && <ReferenceLine x={pcLog} stroke="hsl(var(--destructive))" strokeDasharray="6 3" strokeWidth={1.5} label={{ value: `GM=${gmDb.toFixed(1)}dB`, position: "top", fontSize: 8, fill: "hsl(var(--destructive))" }} />}
-              {gcLog !== null && <ReferenceLine x={gcLog} stroke="hsl(var(--primary))" strokeDasharray="6 3" strokeWidth={1} />}
+              {/* GM annotation: vertical line at ωpc with shaded region from curve to 0dB */}
+              {pcLog !== null && (
+                <>
+                  <ReferenceLine x={pcLog} stroke="hsl(var(--destructive))" strokeDasharray="6 3" strokeWidth={1.5} />
+                  <ReferenceDot x={pcLog} y={magAtPcDb} r={4} fill="hsl(var(--destructive))" stroke="hsl(var(--destructive))" strokeWidth={1} />
+                  <ReferenceDot x={pcLog} y={0} r={3} fill="none" stroke="hsl(var(--destructive))" strokeWidth={1.5} />
+                  {magAtPcDb < 0 && (
+                    <ReferenceArea x1={pcLog - 0.08} x2={pcLog + 0.08} y1={magAtPcDb} y2={0}
+                      fill="hsl(var(--destructive))" fillOpacity={0.15} strokeWidth={0}
+                      label={{ value: `GM\n${gmDb.toFixed(1)}dB`, position: "right", fontSize: 8, fill: "hsl(var(--destructive))" }}
+                    />
+                  )}
+                  {magAtPcDb >= 0 && (
+                    <ReferenceArea x1={pcLog - 0.08} x2={pcLog + 0.08} y1={0} y2={magAtPcDb}
+                      fill="hsl(var(--destructive))" fillOpacity={0.12} strokeWidth={0}
+                      label={{ value: `GM\n${gmDb.toFixed(1)}dB`, position: "right", fontSize: 8, fill: "hsl(var(--destructive))" }}
+                    />
+                  )}
+                </>
+              )}
+              {/* Gain crossover marker on mag plot */}
+              {gcLog !== null && (
+                <>
+                  <ReferenceLine x={gcLog} stroke="hsl(var(--primary))" strokeDasharray="6 3" strokeWidth={1} />
+                  <ReferenceDot x={gcLog} y={0} r={4} fill="hsl(var(--primary))" stroke="hsl(var(--primary))" strokeWidth={1} />
+                </>
+              )}
               <Line type="monotone" dataKey="mag" stroke="hsl(var(--accent))" strokeWidth={1.5} dot={false} name="|G(jω)| dB" />
             </LineChart>
           </ResponsiveContainer>
+
+          {/* Phase plot */}
           <ResponsiveContainer width="100%" height={140}>
             <LineChart data={data} margin={{ top: 0, right: 10, left: 0, bottom: 5 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
@@ -416,8 +450,26 @@ function BodePlot({ result }: { result: SolverResult }) {
               <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "deg", angle: -90, position: "insideLeft", fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
               <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
               <ReferenceLine y={-180} stroke="hsl(var(--destructive))" strokeDasharray="5 3" />
-              {gcLog !== null && <ReferenceLine x={gcLog} stroke="hsl(var(--primary))" strokeDasharray="6 3" strokeWidth={1.5} label={{ value: `PM=${pmDeg.toFixed(1)}°`, position: "top", fontSize: 8, fill: "hsl(var(--primary))" }} />}
-              {pcLog !== null && <ReferenceLine x={pcLog} stroke="hsl(var(--destructive))" strokeDasharray="6 3" strokeWidth={1} />}
+              {/* PM annotation: vertical line at ωgc with shaded region from phase to -180° */}
+              {gcLog !== null && (
+                <>
+                  <ReferenceLine x={gcLog} stroke="hsl(var(--primary))" strokeDasharray="6 3" strokeWidth={1.5} />
+                  <ReferenceDot x={gcLog} y={phaseAtGcDeg} r={4} fill="hsl(var(--primary))" stroke="hsl(var(--primary))" strokeWidth={1} />
+                  <ReferenceDot x={gcLog} y={-180} r={3} fill="none" stroke="hsl(var(--primary))" strokeWidth={1.5} />
+                  <ReferenceArea x1={gcLog - 0.08} x2={gcLog + 0.08}
+                    y1={Math.min(phaseAtGcDeg, -180)} y2={Math.max(phaseAtGcDeg, -180)}
+                    fill="hsl(var(--primary))" fillOpacity={0.15} strokeWidth={0}
+                    label={{ value: `PM\n${pmDeg.toFixed(1)}°`, position: "right", fontSize: 8, fill: "hsl(var(--primary))" }}
+                  />
+                </>
+              )}
+              {/* Phase crossover marker on phase plot */}
+              {pcLog !== null && (
+                <>
+                  <ReferenceLine x={pcLog} stroke="hsl(var(--destructive))" strokeDasharray="6 3" strokeWidth={1} />
+                  <ReferenceDot x={pcLog} y={-180} r={4} fill="hsl(var(--destructive))" stroke="hsl(var(--destructive))" strokeWidth={1} />
+                </>
+              )}
               <Line type="monotone" dataKey="phase" stroke="hsl(var(--primary))" strokeWidth={1.5} dot={false} name="∠G(jω) °" />
             </LineChart>
           </ResponsiveContainer>
