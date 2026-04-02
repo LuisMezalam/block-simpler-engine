@@ -724,6 +724,30 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
     return points;
   }, [numC, denC, olPoles, olZeros]);
 
+  // Compute asymptotes: angles and centroid (Ogata §6-3, Nise §8.2)
+  // n = #poles, m = #zeros, asymptotes exist when n > m
+  // Centroid σ_a = (Σ poles - Σ zeros) / (n - m)
+  // Angles θ_k = (2k+1)π / (n-m), k = 0,1,...,n-m-1
+  const asymptotes = useMemo(() => {
+    const realPoles = olPoles.filter(p => !isNaN(p.re));
+    const realZeros = olZeros.filter(z => !isNaN(z.re));
+    const n = realPoles.length;
+    const m = realZeros.length;
+    const diff = n - m;
+    if (diff <= 0) return null;
+
+    const sumPoles = realPoles.reduce((s, p) => s + p.re, 0);
+    const sumZeros = realZeros.reduce((s, z) => s + z.re, 0);
+    const centroid = (sumPoles - sumZeros) / diff;
+
+    const angles: number[] = [];
+    for (let k = 0; k < diff; k++) {
+      angles.push(((2 * k + 1) * Math.PI) / diff);
+    }
+
+    return { centroid, angles, n, m };
+  }, [olPoles, olZeros]);
+
   // Compute bounds
   const allPts = [
     ...olPoles, ...olZeros,
