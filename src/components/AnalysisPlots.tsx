@@ -1008,6 +1008,18 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
             ))}
           </div>
         )}
+        {/* Asymptote info */}
+        {asymptotes && (
+          <div className="text-[8px] font-mono text-muted-foreground space-y-0.5 pt-1 border-t border-border/50">
+            <span className="text-[7px] uppercase tracking-wider">Asymptotes ({asymptotes.n}P − {asymptotes.m}Z = {asymptotes.n - asymptotes.m}):</span>
+            <div className="text-foreground/80">
+              σ_a = {asymptotes.centroid.toFixed(3)}
+            </div>
+            <div className="text-foreground/80">
+              θ = {asymptotes.angles.map(a => `${(a * 180 / Math.PI).toFixed(0)}°`).join(", ")}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
