@@ -931,6 +931,20 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
             ))}
           </div>
         )}
+        {/* Breakaway/Break-in points */}
+        {breakawayPoints.length > 0 && (
+          <div className="text-[8px] font-mono text-muted-foreground space-y-0.5 pt-1 border-t border-border/50">
+            <span className="text-[7px] uppercase tracking-wider">Breakaway/Break-in:</span>
+            {breakawayPoints.map((bp, i) => (
+              <div key={i} className="text-foreground/80">
+                <span style={{ color: bp.type === "breakaway" ? "hsl(320, 80%, 60%)" : "hsl(180, 80%, 50%)" }}>
+                  {bp.type === "breakaway" ? "◆ Away" : "◆ In"}
+                </span>{" "}
+                σ = {bp.re.toFixed(3)}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
