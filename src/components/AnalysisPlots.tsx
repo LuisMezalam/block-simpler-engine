@@ -918,17 +918,23 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
         })}
 
         {/* Legend */}
-        <g transform={`translate(6, ${H - 28})`}>
+        <g transform={`translate(6, ${H - 36})`}>
           <line x1={0} y1={0} x2={6} y2={6} stroke="hsl(var(--destructive))" strokeWidth={1.5} />
           <line x1={6} y1={0} x2={0} y2={6} stroke="hsl(var(--destructive))" strokeWidth={1.5} />
-          <text x={10} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">OL Poles</text>
-          <circle cx={55} cy={3} r={3} fill="none" stroke="hsl(var(--accent))" strokeWidth={1.5} />
-          <text x={61} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Zeros</text>
-          <circle cx={90} cy={3} r={4} fill="hsl(var(--warning) / 0.3)" stroke="hsl(var(--warning))" strokeWidth={1.5} />
-          <text x={97} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">K={kValue.toFixed(1)}</text>
-          {/* Breakaway legend */}
-          <polygon points="140,0 144,3 140,6 136,3" fill="hsl(320, 80%, 60% / 0.3)" stroke="hsl(320, 80%, 60%)" strokeWidth={1} />
-          <text x={148} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Break</text>
+          <text x={10} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Poles</text>
+          <circle cx={42} cy={3} r={3} fill="none" stroke="hsl(var(--accent))" strokeWidth={1.5} />
+          <text x={48} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Zeros</text>
+          <circle cx={78} cy={3} r={4} fill="hsl(var(--warning) / 0.3)" stroke="hsl(var(--warning))" strokeWidth={1.5} />
+          <text x={85} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">K</text>
+          <polygon points="100,0 104,3 100,6 96,3" fill="hsl(320, 80%, 60% / 0.3)" stroke="hsl(320, 80%, 60%)" strokeWidth={1} />
+          <text x={108} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Brk</text>
+        </g>
+        <g transform={`translate(6, ${H - 24})`}>
+          <line x1={0} y1={0} x2={8} y2={0} stroke="hsl(var(--muted-foreground) / 0.35)" strokeWidth={1} strokeDasharray="3 2" />
+          <text x={12} y={3} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Asymptotes</text>
+          <line x1={72} y1={-3} x2={72} y2={3} stroke="hsl(45, 90%, 55%)" strokeWidth={1.5} />
+          <line x1={69} y1={0} x2={75} y2={0} stroke="hsl(45, 90%, 55%)" strokeWidth={1.5} />
+          <text x={79} y={3} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Centroid</text>
         </g>
       </svg>
 
