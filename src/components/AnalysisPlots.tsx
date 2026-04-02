@@ -253,6 +253,8 @@ function BodePlot({ result }: { result: SolverResult }) {
     let pcLog: number | null = null;
     let gmDb = Infinity;
     let pmDeg = Infinity;
+    let magAtPcDb = 0; // magnitude (dB) at phase crossover
+    let phaseAtGcDeg = 0; // phase (deg) at gain crossover
     let prevMagDb = NaN;
     let prevPhase = NaN;
     let prevExp = NaN;
@@ -298,7 +300,8 @@ function BodePlot({ result }: { result: SolverResult }) {
         if ((prevMagDb > 0 && magDb <= 0) || (prevMagDb < 0 && magDb >= 0)) {
           const t = Math.abs(prevMagDb) / (Math.abs(prevMagDb) + Math.abs(magDb) + 1e-30);
           gcLog = parseFloat((prevExp + t * (exp - prevExp)).toFixed(2));
-          pmDeg = 180 + (prevPhase + t * (phaseDeg - prevPhase));
+          phaseAtGcDeg = prevPhase + t * (phaseDeg - prevPhase);
+          pmDeg = 180 + phaseAtGcDeg;
         }
       }
 
@@ -306,8 +309,8 @@ function BodePlot({ result }: { result: SolverResult }) {
         if ((prevPhase > -180 && phaseDeg <= -180) || (prevPhase < -180 && phaseDeg >= -180)) {
           const t = Math.abs(prevPhase + 180) / (Math.abs(prevPhase + 180) + Math.abs(phaseDeg + 180) + 1e-30);
           pcLog = parseFloat((prevExp + t * (exp - prevExp)).toFixed(2));
-          const magAtPc = prevMagDb + t * (magDb - prevMagDb);
-          gmDb = -magAtPc;
+          magAtPcDb = prevMagDb + t * (magDb - prevMagDb);
+          gmDb = -magAtPcDb;
         }
       }
 
@@ -378,7 +381,7 @@ function BodePlot({ result }: { result: SolverResult }) {
       return true;
     });
 
-    return { data: points, margins: { gcLog, pcLog, gmDb, pmDeg }, keyFreqs: unique };
+    return { data: points, margins: { gcLog, pcLog, gmDb, pmDeg, magAtPcDb, phaseAtGcDeg }, keyFreqs: unique };
   }, [result]);
 
   const { gcLog, pcLog, gmDb, pmDeg } = margins;
