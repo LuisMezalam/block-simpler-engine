@@ -855,6 +855,54 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
         {/* jω axis */}
         <line x1={cx} y1={0} x2={cx} y2={H} stroke="hsl(var(--border))" strokeWidth={0.5} strokeDasharray="4 2" />
 
+        {/* Constant damping ratio ζ lines */}
+        {[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9].map(zeta => {
+          // ζ = cos(θ) where θ is angle from negative real axis
+          // Line from origin into LHP at angle θ = acos(ζ)
+          const theta = Math.acos(zeta);
+          const lineLen = maxAbs * 1.8;
+          // Upper half: angle π - θ from positive real axis
+          const dxU = -lineLen * Math.cos(theta);
+          const dyU = lineLen * Math.sin(theta);
+          // Lower half: conjugate
+          return (
+            <g key={`zeta${zeta}`}>
+              <line
+                x1={cx} y1={cy}
+                x2={cx + dxU * scale} y2={cy - dyU * scale}
+                stroke="hsl(var(--muted-foreground) / 0.15)"
+                strokeWidth={0.7}
+                strokeDasharray="3 3"
+              />
+              <line
+                x1={cx} y1={cy}
+                x2={cx + dxU * scale} y2={cy + dyU * scale}
+                stroke="hsl(var(--muted-foreground) / 0.15)"
+                strokeWidth={0.7}
+                strokeDasharray="3 3"
+              />
+              {/* Label on upper line */}
+              {(() => {
+                const labelDist = maxAbs * 0.75;
+                const lx = cx + (-labelDist * Math.cos(theta)) * scale;
+                const ly = cy - (labelDist * Math.sin(theta)) * scale;
+                return (
+                  <text
+                    x={lx} y={ly - 3}
+                    fill="hsl(var(--muted-foreground) / 0.4)"
+                    fontSize={6}
+                    fontFamily="monospace"
+                    textAnchor="middle"
+                    transform={`rotate(${-(90 - theta * 180 / Math.PI)}, ${lx}, ${ly - 3})`}
+                  >
+                    ζ={zeta}
+                  </text>
+                );
+              })()}
+            </g>
+          );
+        })}
+
         {/* Asymptote lines and centroid */}
         {asymptotes && (() => {
           const { centroid, angles } = asymptotes;
