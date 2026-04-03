@@ -1167,9 +1167,263 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
   );
 }
 
+// ─── Nichols Chart (SVG) ─────────────────────────────────────────────────────
+
+function NicholsChart({ result }: { result: SolverResult }) {
+  const { data, margins } = useMemo(() => {
+    const { num, den } = result.equivalentTF;
+    const pts: { phaseDeg: number; magDb: number; w: number }[] = [];
+
+    let gcPhase: number | null = null;
+    let pcMag: number | null = null;
+    let gmDb = Infinity;
+    let pmDeg = Infinity;
+
+    let prevMagDb = NaN;
+    let prevPhase = NaN;
+
+    for (let exp = -3; exp <= 4; exp += 0.02) {
+      const w = Math.pow(10, exp);
+      let numRe = 0, numIm = 0;
+      for (let k = 0; k < num.coeffs.length; k++) {
+        const c = num.coeffs[k];
+        const wk = Math.pow(w, k);
+        switch (k % 4) {
+          case 0: numRe += c * wk; break;
+          case 1: numIm += c * wk; break;
+          case 2: numRe -= c * wk; break;
+          case 3: numIm -= c * wk; break;
+        }
+      }
+      let denRe = 0, denIm = 0;
+      for (let k = 0; k < den.coeffs.length; k++) {
+        const c = den.coeffs[k];
+        const wk = Math.pow(w, k);
+        switch (k % 4) {
+          case 0: denRe += c * wk; break;
+          case 1: denIm += c * wk; break;
+          case 2: denRe -= c * wk; break;
+          case 3: denIm -= c * wk; break;
+        }
+      }
+      const dMagSq = denRe * denRe + denIm * denIm;
+      if (dMagSq < 1e-30) continue;
+      const gRe = (numRe * denRe + numIm * denIm) / dMagSq;
+      const gIm = (numIm * denRe - numRe * denIm) / dMagSq;
+      const mag = Math.sqrt(gRe * gRe + gIm * gIm);
+      const magDb = 20 * Math.log10(mag || 1e-30);
+      const phaseDeg = Math.atan2(gIm, gRe) * (180 / Math.PI);
+
+      // Detect crossovers
+      if (!isNaN(prevMagDb)) {
+        if (gcPhase === null && ((prevMagDb > 0 && magDb <= 0) || (prevMagDb < 0 && magDb >= 0))) {
+          const t = Math.abs(prevMagDb) / (Math.abs(prevMagDb) + Math.abs(magDb) + 1e-30);
+          gcPhase = prevPhase + t * (phaseDeg - prevPhase);
+          pmDeg = 180 + gcPhase;
+        }
+        if (pcMag === null && ((prevPhase > -180 && phaseDeg <= -180) || (prevPhase < -180 && phaseDeg >= -180))) {
+          const t = Math.abs(prevPhase + 180) / (Math.abs(prevPhase + 180) + Math.abs(phaseDeg + 180) + 1e-30);
+          pcMag = prevMagDb + t * (magDb - prevMagDb);
+          gmDb = -pcMag;
+        }
+      }
+
+      if (magDb > -80 && magDb < 80) {
+        pts.push({ phaseDeg, magDb, w });
+      }
+      prevMagDb = magDb;
+      prevPhase = phaseDeg;
+    }
+    return { data: pts, margins: { gcPhase, pcMag, gmDb, pmDeg } };
+  }, [result]);
+
+  if (data.length < 2) {
+    return (
+      <div className="flex items-center justify-center h-full text-xs text-muted-foreground font-mono">
+        Insufficient data for Nichols chart
+      </div>
+    );
+  }
+
+  // Chart dimensions
+  const W = 360, H = 300;
+  const padL = 40, padR = 15, padT = 15, padB = 30;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+
+  // Axis ranges
+  const phaseMin = -360, phaseMax = 0;
+  const magMin = -40, magMax = 40;
+  const phaseRange = phaseMax - phaseMin;
+  const magRange = magMax - magMin;
+
+  const toX = (phase: number) => padL + ((phase - phaseMin) / phaseRange) * plotW;
+  const toY = (mag: number) => padT + ((magMax - mag) / magRange) * plotH;
+
+  // Build path
+  const pathD = data.map((p, i) => {
+    const x = toX(Math.max(phaseMin, Math.min(phaseMax, p.phaseDeg)));
+    const y = toY(Math.max(magMin, Math.min(magMax, p.magDb)));
+    return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+
+  // M-circle contours (closed-loop magnitude in dB)
+  const mCircleValues = [-12, -6, -3, -1, 0, 0.25, 0.5, 1, 3, 6, 12];
+
+  // Generate M-circle points: |G/(1+G)| = M where M = 10^(MdB/20)
+  // Parametrically: for each M, sweep angle to get (phase, magdB) locus
+  const mCirclePaths: Array<{ mDb: number; path: string }> = [];
+  for (const mDb of mCircleValues) {
+    const M = Math.pow(10, mDb / 20);
+    const pts: string[] = [];
+    for (let theta = 0; theta <= 360; theta += 2) {
+      const rad = (theta * Math.PI) / 180;
+      // G = M*e^(j*theta) / (1 - M*e^(j*theta)) ... but we need the Nichols form
+      // Use: for |T|=M, T = G/(1+G), so G = T/(1-T), T = M*e^(j*alpha)
+      const tRe = M * Math.cos(rad);
+      const tIm = M * Math.sin(rad);
+      const dRe = 1 - tRe;
+      const dIm = -tIm;
+      const dMagSq = dRe * dRe + dIm * dIm;
+      if (dMagSq < 1e-10) continue;
+      const gRe = (tRe * dRe + tIm * dIm) / dMagSq;
+      const gIm = (tIm * dRe - tRe * dIm) / dMagSq;
+      const gMag = Math.sqrt(gRe * gRe + gIm * gIm);
+      const gMagDb = 20 * Math.log10(gMag || 1e-30);
+      const gPhaseDeg = Math.atan2(gIm, gRe) * (180 / Math.PI);
+
+      if (gPhaseDeg >= phaseMin && gPhaseDeg <= phaseMax && gMagDb >= magMin && gMagDb <= magMax) {
+        const x = toX(gPhaseDeg);
+        const y = toY(gMagDb);
+        pts.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+      }
+    }
+    if (pts.length > 3) {
+      mCirclePaths.push({ mDb, path: "M" + pts.join(" L") });
+    }
+  }
+
+  // Direction arrow
+  const midIdx = Math.floor(data.length / 3);
+  const arrowData = midIdx < data.length - 1 ? {
+    x1: toX(data[midIdx].phaseDeg), y1: toY(data[midIdx].magDb),
+    x2: toX(data[midIdx + 1].phaseDeg), y2: toY(data[midIdx + 1].magDb),
+  } : null;
+
+  const { gcPhase, pcMag, gmDb, pmDeg } = margins;
+
+  return (
+    <div className="space-y-1">
+      <div className="flex gap-3 px-2 py-1 text-[9px] font-mono text-muted-foreground">
+        <span>GM: <span className={gmDb !== Infinity ? (gmDb > 0 ? "text-green-400" : "text-destructive") : ""}>{gmDb === Infinity ? "∞" : `${gmDb.toFixed(1)} dB`}</span></span>
+        <span>PM: <span className={pmDeg !== Infinity ? (pmDeg > 0 ? "text-green-400" : "text-destructive") : ""}>{pmDeg === Infinity ? "∞" : `${pmDeg.toFixed(1)}°`}</span></span>
+      </div>
+      <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} className="max-w-[360px] mx-auto">
+        {/* Grid lines */}
+        {[-360, -315, -270, -225, -180, -135, -90, -45, 0].map(p => (
+          <line key={`gp${p}`} x1={toX(p)} y1={padT} x2={toX(p)} y2={padT + plotH}
+            stroke={p === -180 ? "hsl(var(--destructive) / 0.4)" : "hsl(var(--border) / 0.5)"}
+            strokeWidth={p === -180 ? 1.5 : 0.5}
+            strokeDasharray={p === -180 ? "6 3" : "2 3"} />
+        ))}
+        {[-40, -20, 0, 20, 40].map(m => (
+          <line key={`gm${m}`} x1={padL} y1={toY(m)} x2={padL + plotW} y2={toY(m)}
+            stroke={m === 0 ? "hsl(var(--warning) / 0.5)" : "hsl(var(--border) / 0.5)"}
+            strokeWidth={m === 0 ? 1.5 : 0.5}
+            strokeDasharray={m === 0 ? "6 3" : "2 3"} />
+        ))}
+
+        {/* M-circles */}
+        {mCirclePaths.map(({ mDb, path }) => (
+          <path key={`mc${mDb}`} d={path} fill="none"
+            stroke={Math.abs(mDb) <= 1 ? "hsl(var(--primary) / 0.3)" : "hsl(var(--muted-foreground) / 0.15)"}
+            strokeWidth={Math.abs(mDb) <= 1 ? 0.8 : 0.5}
+            strokeDasharray="3 4" />
+        ))}
+        {/* M-circle labels */}
+        {mCirclePaths.map(({ mDb, path }) => {
+          const match = path.match(/M([\d.]+),([\d.]+)/);
+          if (!match) return null;
+          return (
+            <text key={`ml${mDb}`} x={parseFloat(match[1]) + 2} y={parseFloat(match[2]) - 2}
+              fill="hsl(var(--muted-foreground) / 0.4)" fontSize={6} fontFamily="monospace">
+              {mDb > 0 ? `+${mDb}` : mDb}dB
+            </text>
+          );
+        })}
+
+        {/* Critical point (-180°, 0 dB) */}
+        <circle cx={toX(-180)} cy={toY(0)} r={5}
+          fill="hsl(var(--destructive) / 0.2)" stroke="hsl(var(--destructive))" strokeWidth={2} />
+
+        {/* GM annotation */}
+        {pcMag !== null && (
+          <>
+            <line x1={toX(-180)} y1={toY(pcMag)} x2={toX(-180)} y2={toY(0)}
+              stroke="hsl(var(--destructive) / 0.6)" strokeWidth={2} strokeDasharray="4 2" />
+            <circle cx={toX(-180)} cy={toY(pcMag)} r={3}
+              fill="hsl(var(--destructive))" stroke="none" />
+          </>
+        )}
+
+        {/* PM annotation */}
+        {gcPhase !== null && (
+          <>
+            <line x1={toX(gcPhase)} y1={toY(0)} x2={toX(-180)} y2={toY(0)}
+              stroke="hsl(var(--primary) / 0.6)" strokeWidth={2} strokeDasharray="4 2" />
+            <circle cx={toX(gcPhase)} cy={toY(0)} r={3}
+              fill="hsl(var(--primary))" stroke="none" />
+          </>
+        )}
+
+        {/* Open-loop curve */}
+        <path d={pathD} fill="none" stroke="hsl(var(--accent))" strokeWidth={2} />
+
+        {/* Direction arrow */}
+        {arrowData && (() => {
+          const dx = arrowData.x2 - arrowData.x1;
+          const dy = arrowData.y2 - arrowData.y1;
+          const len = Math.sqrt(dx * dx + dy * dy);
+          if (len < 1) return null;
+          const ux = dx / len, uy = dy / len;
+          return (
+            <polygon
+              points={`${arrowData.x1 + ux * 7},${arrowData.y1 + uy * 7} ${arrowData.x1 - uy * 3.5},${arrowData.y1 + ux * 3.5} ${arrowData.x1 + uy * 3.5},${arrowData.y1 - ux * 3.5}`}
+              fill="hsl(var(--accent))"
+            />
+          );
+        })()}
+
+        {/* Axis labels */}
+        {[-360, -270, -180, -90, 0].map(p => (
+          <text key={`xl${p}`} x={toX(p)} y={padT + plotH + 15} textAnchor="middle"
+            fill="hsl(var(--muted-foreground))" fontSize={8} fontFamily="monospace">{p}°</text>
+        ))}
+        {[-40, -20, 0, 20, 40].map(m => (
+          <text key={`yl${m}`} x={padL - 5} y={toY(m) + 3} textAnchor="end"
+            fill="hsl(var(--muted-foreground))" fontSize={8} fontFamily="monospace">{m}</text>
+        ))}
+        <text x={padL + plotW / 2} y={H - 2} textAnchor="middle"
+          fill="hsl(var(--muted-foreground))" fontSize={8} fontFamily="monospace">Open-Loop Phase (deg)</text>
+        <text x={8} y={padT + plotH / 2} textAnchor="middle"
+          fill="hsl(var(--muted-foreground))" fontSize={8} fontFamily="monospace"
+          transform={`rotate(-90, 8, ${padT + plotH / 2})`}>dB</text>
+
+        {/* Legend */}
+        <g transform={`translate(${padL + 5}, ${padT + 5})`}>
+          <line x1={0} y1={3} x2={12} y2={3} stroke="hsl(var(--accent))" strokeWidth={2} />
+          <text x={16} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">G(jω)</text>
+          <line x1={50} y1={3} x2={62} y2={3} stroke="hsl(var(--primary) / 0.3)" strokeWidth={0.8} strokeDasharray="3 4" />
+          <text x={66} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">M-circles</text>
+        </g>
+      </svg>
+    </div>
+  );
+}
+
 // ─── Combined Panel ──────────────────────────────────────────────────────────
 
-type PlotTab = "pzmap" | "step" | "bode" | "nyquist" | "rlocus";
+type PlotTab = "pzmap" | "step" | "bode" | "nyquist" | "nichols" | "rlocus";
 
 export function AnalysisPlots({ result }: { result: SolverResult }) {
   const [tab, setTab] = React.useState<PlotTab>("pzmap");
@@ -1180,6 +1434,7 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
     { id: "step", label: "Step" },
     { id: "bode", label: "Bode" },
     { id: "nyquist", label: "Nyquist" },
+    { id: "nichols", label: "Nichols" },
     { id: "rlocus", label: "R.Locus" },
   ];
 
