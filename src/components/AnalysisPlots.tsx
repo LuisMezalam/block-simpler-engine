@@ -1065,12 +1065,18 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
           <polygon points="100,0 104,3 100,6 96,3" fill="hsl(320, 80%, 60% / 0.3)" stroke="hsl(320, 80%, 60%)" strokeWidth={1} />
           <text x={108} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Brk</text>
         </g>
-        <g transform={`translate(6, ${H - 24})`}>
+        <g transform={`translate(6, ${H - 34})`}>
           <line x1={0} y1={0} x2={8} y2={0} stroke="hsl(var(--muted-foreground) / 0.35)" strokeWidth={1} strokeDasharray="3 2" />
           <text x={12} y={3} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Asymptotes</text>
           <line x1={72} y1={-3} x2={72} y2={3} stroke="hsl(45, 90%, 55%)" strokeWidth={1.5} />
           <line x1={69} y1={0} x2={75} y2={0} stroke="hsl(45, 90%, 55%)" strokeWidth={1.5} />
           <text x={79} y={3} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Centroid</text>
+        </g>
+        <g transform={`translate(6, ${H - 24})`}>
+          <circle cx={4} cy={0} r={4} fill="none" stroke="hsl(var(--muted-foreground) / 0.25)" strokeWidth={0.7} strokeDasharray="2 3" />
+          <text x={12} y={3} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">ωn circles</text>
+          <line x1={72} y1={0} x2={80} y2={0} stroke="hsl(var(--muted-foreground) / 0.15)" strokeWidth={0.7} strokeDasharray="3 3" />
+          <text x={84} y={3} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">ζ lines</text>
         </g>
       </svg>
 
