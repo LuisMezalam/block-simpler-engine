@@ -903,6 +903,42 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
           );
         })}
 
+        {/* Constant natural frequency ωn circles */}
+        {(() => {
+          // Choose ωn values based on the plot scale
+          const wnMax = maxAbs * 0.95;
+          const step = Math.pow(10, Math.floor(Math.log10(wnMax)));
+          const candidates = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100].map(m => m * step / 10).filter(v => v > 0.05 && v < wnMax);
+          // Pick at most 5 evenly spaced values
+          const wnValues: number[] = [];
+          const desired = Math.min(candidates.length, 5);
+          for (let i = 0; i < desired; i++) {
+            wnValues.push(candidates[Math.round(i * (candidates.length - 1) / (desired - 1))]);
+          }
+          return wnValues.map(wn => {
+            const r = wn * scale;
+            return (
+              <g key={`wn${wn}`}>
+                <circle
+                  cx={cx} cy={cy} r={r}
+                  fill="none"
+                  stroke="hsl(var(--muted-foreground) / 0.12)"
+                  strokeWidth={0.7}
+                  strokeDasharray="2 3"
+                />
+                <text
+                  x={cx + 3} y={cy - r - 2}
+                  fill="hsl(var(--muted-foreground) / 0.35)"
+                  fontSize={5.5}
+                  fontFamily="monospace"
+                >
+                  ωn={wn % 1 === 0 ? wn : wn.toPrecision(2)}
+                </text>
+              </g>
+            );
+          });
+        })()}
+
         {/* Asymptote lines and centroid */}
         {asymptotes && (() => {
           const { centroid, angles } = asymptotes;
@@ -1029,12 +1065,18 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
           <polygon points="100,0 104,3 100,6 96,3" fill="hsl(320, 80%, 60% / 0.3)" stroke="hsl(320, 80%, 60%)" strokeWidth={1} />
           <text x={108} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Brk</text>
         </g>
-        <g transform={`translate(6, ${H - 24})`}>
+        <g transform={`translate(6, ${H - 34})`}>
           <line x1={0} y1={0} x2={8} y2={0} stroke="hsl(var(--muted-foreground) / 0.35)" strokeWidth={1} strokeDasharray="3 2" />
           <text x={12} y={3} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Asymptotes</text>
           <line x1={72} y1={-3} x2={72} y2={3} stroke="hsl(45, 90%, 55%)" strokeWidth={1.5} />
           <line x1={69} y1={0} x2={75} y2={0} stroke="hsl(45, 90%, 55%)" strokeWidth={1.5} />
           <text x={79} y={3} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Centroid</text>
+        </g>
+        <g transform={`translate(6, ${H - 24})`}>
+          <circle cx={4} cy={0} r={4} fill="none" stroke="hsl(var(--muted-foreground) / 0.25)" strokeWidth={0.7} strokeDasharray="2 3" />
+          <text x={12} y={3} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">ωn circles</text>
+          <line x1={72} y1={0} x2={80} y2={0} stroke="hsl(var(--muted-foreground) / 0.15)" strokeWidth={0.7} strokeDasharray="3 3" />
+          <text x={84} y={3} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">ζ lines</text>
         </g>
       </svg>
 
