@@ -903,6 +903,42 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
           );
         })}
 
+        {/* Constant natural frequency ωn circles */}
+        {(() => {
+          // Choose ωn values based on the plot scale
+          const wnMax = maxAbs * 0.95;
+          const step = Math.pow(10, Math.floor(Math.log10(wnMax)));
+          const candidates = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100].map(m => m * step / 10).filter(v => v > 0.05 && v < wnMax);
+          // Pick at most 5 evenly spaced values
+          const wnValues: number[] = [];
+          const desired = Math.min(candidates.length, 5);
+          for (let i = 0; i < desired; i++) {
+            wnValues.push(candidates[Math.round(i * (candidates.length - 1) / (desired - 1))]);
+          }
+          return wnValues.map(wn => {
+            const r = wn * scale;
+            return (
+              <g key={`wn${wn}`}>
+                <circle
+                  cx={cx} cy={cy} r={r}
+                  fill="none"
+                  stroke="hsl(var(--muted-foreground) / 0.12)"
+                  strokeWidth={0.7}
+                  strokeDasharray="2 3"
+                />
+                <text
+                  x={cx + 3} y={cy - r - 2}
+                  fill="hsl(var(--muted-foreground) / 0.35)"
+                  fontSize={5.5}
+                  fontFamily="monospace"
+                >
+                  ωn={wn % 1 === 0 ? wn : wn.toPrecision(2)}
+                </text>
+              </g>
+            );
+          });
+        })()}
+
         {/* Asymptote lines and centroid */}
         {asymptotes && (() => {
           const { centroid, angles } = asymptotes;
