@@ -1486,6 +1486,7 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
         {tab === "step" && <TimeResponsePlot result={result} />}
         {tab === "bode" && <BodePlot result={result} />}
         {tab === "nyquist" && <NyquistPlot result={result} />}
+        {tab === "nichols" && <NicholsChart result={result} />}
         {tab === "rlocus" && <RootLocusPlot result={result} />}
       </div>
     </div>
