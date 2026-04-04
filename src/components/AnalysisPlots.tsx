@@ -1352,6 +1352,73 @@ function NicholsChart({ result }: { result: SolverResult }) {
           );
         })}
 
+        {/* N-circles (constant closed-loop phase contours) */}
+        {(() => {
+          const nPhaseValues = [-150, -120, -90, -60, -30, -10, 10, 30, 60, 90, 120, 150];
+          const nPaths: Array<{ nDeg: number; path: string }> = [];
+          for (const nDeg of nPhaseValues) {
+            const alpha = (nDeg * Math.PI) / 180;
+            const pts: Array<[number, number]> = [];
+            // Sweep |T| from very small to very large to trace the N-circle
+            for (let logM = -2; logM <= 2; logM += 0.02) {
+              const Mmag = Math.pow(10, logM);
+              const tRe = Mmag * Math.cos(alpha);
+              const tIm = Mmag * Math.sin(alpha);
+              const dRe = 1 - tRe;
+              const dIm = -tIm;
+              const dMagSq = dRe * dRe + dIm * dIm;
+              if (dMagSq < 1e-10) continue;
+              const gRe2 = (tRe * dRe + tIm * dIm) / dMagSq;
+              const gIm2 = (tIm * dRe - tRe * dIm) / dMagSq;
+              const gMag2 = Math.sqrt(gRe2 * gRe2 + gIm2 * gIm2);
+              const gMagDb2 = 20 * Math.log10(gMag2 || 1e-30);
+              const gPhaseDeg2 = Math.atan2(gIm2, gRe2) * (180 / Math.PI);
+              if (gPhaseDeg2 >= phaseMin && gPhaseDeg2 <= phaseMax && gMagDb2 >= magMin && gMagDb2 <= magMax) {
+                pts.push([toX(gPhaseDeg2), toY(gMagDb2)]);
+              }
+            }
+            // Filter out large jumps (discontinuities from wrapping)
+            if (pts.length > 3) {
+              const segments: string[] = [];
+              let seg: string[] = [`M${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}`];
+              for (let i = 1; i < pts.length; i++) {
+                const dx = pts[i][0] - pts[i - 1][0];
+                const dy = pts[i][1] - pts[i - 1][1];
+                if (Math.sqrt(dx * dx + dy * dy) > 50) {
+                  if (seg.length > 2) segments.push(seg.join(" "));
+                  seg = [`M${pts[i][0].toFixed(1)},${pts[i][1].toFixed(1)}`];
+                } else {
+                  seg.push(`L${pts[i][0].toFixed(1)},${pts[i][1].toFixed(1)}`);
+                }
+              }
+              if (seg.length > 2) segments.push(seg.join(" "));
+              if (segments.length > 0) {
+                nPaths.push({ nDeg, path: segments.join(" ") });
+              }
+            }
+          }
+          return (
+            <>
+              {nPaths.map(({ nDeg, path }) => (
+                <path key={`nc${nDeg}`} d={path} fill="none"
+                  stroke="hsl(var(--chart-4) / 0.25)"
+                  strokeWidth={0.5}
+                  strokeDasharray="2 4" />
+              ))}
+              {nPaths.map(({ nDeg, path }) => {
+                const match = path.match(/M([\d.]+),([\d.]+)/);
+                if (!match) return null;
+                return (
+                  <text key={`nl${nDeg}`} x={parseFloat(match[1]) + 2} y={parseFloat(match[2]) + 6}
+                    fill="hsl(var(--chart-4) / 0.35)" fontSize={5.5} fontFamily="monospace">
+                    {nDeg}°
+                  </text>
+                );
+              })}
+            </>
+          );
+        })()}
+
         {/* Critical point (-180°, 0 dB) */}
         <circle cx={toX(-180)} cy={toY(0)} r={5}
           fill="hsl(var(--destructive) / 0.2)" stroke="hsl(var(--destructive))" strokeWidth={2} />
