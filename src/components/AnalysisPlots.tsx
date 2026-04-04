@@ -548,7 +548,7 @@ function BodePlot({ result }: { result: SolverResult }) {
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
               <XAxis dataKey="wLog" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} hide />
               <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "dB", angle: -90, position: "insideLeft", fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
-              <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
+              <Tooltip cursor={{ stroke: "hsl(var(--foreground) / 0.3)", strokeWidth: 1, strokeDasharray: "3 3" }} contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
               <ReferenceLine y={0} stroke="hsl(var(--warning))" strokeDasharray="5 3" />
               {/* GM annotation: vertical line at ωpc with shaded region from curve to 0dB */}
               {pcLog !== null && (
