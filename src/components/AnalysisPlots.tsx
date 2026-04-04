@@ -9,6 +9,71 @@ import {
 } from "recharts";
 import html2canvas from "html2canvas";
 import { Download } from "lucide-react";
+// ─── SVG Crosshair Layer ─────────────────────────────────────────────────────
+
+function SvgCrosshairLayer({
+  bounds,
+  fromX,
+  fromY,
+  labelX = "x",
+  labelY = "y",
+}: {
+  bounds: { x1: number; y1: number; x2: number; y2: number };
+  fromX: (svgX: number) => string;
+  fromY: (svgY: number) => string;
+  labelX?: string;
+  labelY?: string;
+}) {
+  const [pos, setPos] = React.useState<{ x: number; y: number } | null>(null);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent<SVGRectElement>) => {
+    const svg = e.currentTarget.ownerSVGElement;
+    if (!svg) return;
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return;
+    const svgPt = pt.matrixTransform(ctm.inverse());
+    setPos({ x: svgPt.x, y: svgPt.y });
+  }, []);
+
+  const { x1, y1, x2, y2 } = bounds;
+  const inBounds = pos && pos.x >= x1 && pos.x <= x2 && pos.y >= y1 && pos.y <= y2;
+
+  const boxW = 95;
+  const boxH = 22;
+  const bx = pos ? (pos.x + boxW + 12 > x2 ? pos.x - boxW - 8 : pos.x + 8) : 0;
+  const by = pos ? (pos.y - boxH - 4 < y1 ? pos.y + 4 : pos.y - boxH - 4) : 0;
+
+  return (
+    <g>
+      <rect
+        x={x1} y={y1} width={x2 - x1} height={y2 - y1}
+        fill="transparent"
+        onMouseMove={handleMouseMove}
+        onMouseLeave={() => setPos(null)}
+        style={{ cursor: "crosshair" }}
+      />
+      {inBounds && pos && (
+        <>
+          <line x1={pos.x} y1={y1} x2={pos.x} y2={y2}
+            stroke="hsl(var(--foreground) / 0.25)" strokeWidth={0.5} strokeDasharray="3 3" pointerEvents="none" />
+          <line x1={x1} y1={pos.y} x2={x2} y2={pos.y}
+            stroke="hsl(var(--foreground) / 0.25)" strokeWidth={0.5} strokeDasharray="3 3" pointerEvents="none" />
+          <rect x={bx} y={by} width={boxW} height={boxH} rx={3}
+            fill="hsl(var(--card) / 0.92)" stroke="hsl(var(--border))" strokeWidth={0.5} pointerEvents="none" />
+          <text x={bx + 4} y={by + 9} fill="hsl(var(--foreground))" fontSize={7} fontFamily="monospace" pointerEvents="none">
+            {labelX}: {fromX(pos.x)}
+          </text>
+          <text x={bx + 4} y={by + 18} fill="hsl(var(--foreground))" fontSize={7} fontFamily="monospace" pointerEvents="none">
+            {labelY}: {fromY(pos.y)}
+          </text>
+        </>
+      )}
+    </g>
+  );
+}
 
 // ─── Pole-Zero Map (SVG) ─────────────────────────────────────────────────────
 
@@ -94,6 +159,15 @@ function PoleZeroMap({ result }: { result: SolverResult }) {
         <circle cx={50} cy={3} r={4} fill="none" stroke="hsl(var(--accent))" strokeWidth={1.5} />
         <text x={58} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Zeros</text>
       </g>
+
+      {/* Crosshair */}
+      <SvgCrosshairLayer
+        bounds={{ x1: 0, y1: 0, x2: W, y2: H }}
+        fromX={(x) => ((x - cx) / scaleVal).toFixed(2)}
+        fromY={(y) => (-(y - cy) / scaleVal).toFixed(2)}
+        labelX="Re"
+        labelY="Im"
+      />
     </svg>
   );
 }
@@ -220,7 +294,7 @@ function TimeResponsePlot({ result }: { result: SolverResult }) {
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
           <XAxis dataKey="t" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "t (s)", position: "insideBottomRight", offset: -5, fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
           <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
-          <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
+          <Tooltip cursor={{ stroke: "hsl(var(--foreground) / 0.3)", strokeWidth: 1, strokeDasharray: "3 3" }} contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
 
           {/* Settling time 2% band */}
           {mode === "step" && finalValue !== 0 && (
@@ -474,7 +548,7 @@ function BodePlot({ result }: { result: SolverResult }) {
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
               <XAxis dataKey="wLog" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} hide />
               <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "dB", angle: -90, position: "insideLeft", fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
-              <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
+              <Tooltip cursor={{ stroke: "hsl(var(--foreground) / 0.3)", strokeWidth: 1, strokeDasharray: "3 3" }} contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
               <ReferenceLine y={0} stroke="hsl(var(--warning))" strokeDasharray="5 3" />
               {/* GM annotation: vertical line at ωpc with shaded region from curve to 0dB */}
               {pcLog !== null && (
@@ -513,7 +587,7 @@ function BodePlot({ result }: { result: SolverResult }) {
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
               <XAxis dataKey="wLog" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "log₁₀(ω)", position: "insideBottomRight", offset: -5, fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
               <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "deg", angle: -90, position: "insideLeft", fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
-              <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
+              <Tooltip cursor={{ stroke: "hsl(var(--foreground) / 0.3)", strokeWidth: 1, strokeDasharray: "3 3" }} contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
               <ReferenceLine y={-180} stroke="hsl(var(--destructive))" strokeDasharray="5 3" />
               {/* PM annotation: vertical line at ωgc with shaded region from phase to -180° */}
               {gcLog !== null && (
@@ -705,6 +779,15 @@ function NyquistPlot({ result }: { result: SolverResult }) {
         <circle cx={55} cy={3} r={3} fill="hsl(var(--destructive) / 0.3)" stroke="hsl(var(--destructive))" strokeWidth={1} />
         <text x={62} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">−1 crit.</text>
       </g>
+
+      {/* Crosshair */}
+      <SvgCrosshairLayer
+        bounds={{ x1: 0, y1: 0, x2: W, y2: H }}
+        fromX={(x) => ((x - cx) / scale).toFixed(2)}
+        fromY={(y) => (-(y - cy) / scale).toFixed(2)}
+        labelX="Re"
+        labelY="Im"
+      />
     </svg>
   );
 }
@@ -1143,6 +1226,15 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
           <line x1={72} y1={0} x2={80} y2={0} stroke="hsl(var(--muted-foreground) / 0.15)" strokeWidth={0.7} strokeDasharray="3 3" />
           <text x={84} y={3} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">ζ lines</text>
         </g>
+
+        {/* Crosshair */}
+        <SvgCrosshairLayer
+          bounds={{ x1: 0, y1: 0, x2: W, y2: H }}
+          fromX={(x) => ((x - cx) / scale).toFixed(2)}
+          fromY={(y) => (-(y - cy) / scale).toFixed(2)}
+          labelX="Re"
+          labelY="Im"
+        />
       </svg>
 
       {/* K Slider */}
@@ -1550,6 +1642,15 @@ function NicholsChart({ result }: { result: SolverResult }) {
           <line x1={115} y1={3} x2={127} y2={3} stroke="hsl(var(--chart-4) / 0.4)" strokeWidth={0.5} strokeDasharray="2 4" />
           <text x={131} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">N-circles</text>
         </g>
+
+        {/* Crosshair */}
+        <SvgCrosshairLayer
+          bounds={{ x1: padL, y1: padT, x2: W - padR, y2: H - padB }}
+          fromX={(x) => (phaseMin + ((x - padL) / plotW) * phaseRange).toFixed(1) + "°"}
+          fromY={(y) => (magMax - ((y - padT) / plotH) * magRange).toFixed(1) + " dB"}
+          labelX="∠"
+          labelY="|G|"
+        />
       </svg>
     </div>
   );
