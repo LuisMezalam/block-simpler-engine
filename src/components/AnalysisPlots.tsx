@@ -1226,6 +1226,15 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
           <line x1={72} y1={0} x2={80} y2={0} stroke="hsl(var(--muted-foreground) / 0.15)" strokeWidth={0.7} strokeDasharray="3 3" />
           <text x={84} y={3} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">ζ lines</text>
         </g>
+
+        {/* Crosshair */}
+        <SvgCrosshairLayer
+          bounds={{ x1: 0, y1: 0, x2: W, y2: H }}
+          fromX={(x) => ((x - cx) / scale).toFixed(2)}
+          fromY={(y) => (-(y - cy) / scale).toFixed(2)}
+          labelX="Re"
+          labelY="Im"
+        />
       </svg>
 
       {/* K Slider */}
