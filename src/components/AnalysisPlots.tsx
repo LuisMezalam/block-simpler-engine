@@ -779,6 +779,15 @@ function NyquistPlot({ result }: { result: SolverResult }) {
         <circle cx={55} cy={3} r={3} fill="hsl(var(--destructive) / 0.3)" stroke="hsl(var(--destructive))" strokeWidth={1} />
         <text x={62} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">−1 crit.</text>
       </g>
+
+      {/* Crosshair */}
+      <SvgCrosshairLayer
+        bounds={{ x1: 0, y1: 0, x2: W, y2: H }}
+        fromX={(x) => ((x - cx) / scale).toFixed(2)}
+        fromY={(y) => (-(y - cy) / scale).toFixed(2)}
+        labelX="Re"
+        labelY="Im"
+      />
     </svg>
   );
 }
