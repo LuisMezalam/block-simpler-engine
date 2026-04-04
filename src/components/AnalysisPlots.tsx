@@ -215,14 +215,79 @@ function TimeResponsePlot({ result }: { result: SolverResult }) {
         ))}
       </div>
 
-      <ResponsiveContainer width="100%" height={170}>
-        <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+      <ResponsiveContainer width="100%" height={190}>
+        <LineChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
           <XAxis dataKey="t" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "t (s)", position: "insideBottomRight", offset: -5, fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
           <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
           <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
+
+          {/* Settling time 2% band */}
+          {mode === "step" && finalValue !== 0 && (
+            <ReferenceArea
+              y1={finalValue * 1.02}
+              y2={finalValue * 0.98}
+              fill="hsl(var(--primary) / 0.08)"
+              stroke="none"
+            />
+          )}
+          {mode === "impulse" && peakValue !== 0 && (
+            <ReferenceArea
+              y1={0.02 * Math.abs(peakValue)}
+              y2={-0.02 * Math.abs(peakValue)}
+              fill="hsl(var(--accent) / 0.08)"
+              stroke="none"
+            />
+          )}
+
+          {/* Settling time vertical marker */}
+          {settlingTime > 0 && (
+            <ReferenceLine
+              x={parseFloat(settlingTime.toFixed(4))}
+              stroke="hsl(var(--chart-4))"
+              strokeDasharray="4 3"
+              strokeWidth={1}
+              label={{ value: `ts=${settlingTime.toFixed(2)}s`, position: "top", fontSize: 8, fill: "hsl(var(--chart-4))", fontFamily: "monospace" }}
+            />
+          )}
+
+          {/* Final value line */}
           {mode === "step" && <ReferenceLine y={finalValue} stroke="hsl(var(--warning))" strokeDasharray="5 3" strokeWidth={1} />}
           <ReferenceLine y={0} stroke="hsl(var(--border))" />
+
+          {/* Overshoot: peak value line + peak dot (step only) */}
+          {mode === "step" && overshoot > 0.1 && (
+            <>
+              <ReferenceLine
+                y={peakValue}
+                stroke="hsl(var(--destructive) / 0.5)"
+                strokeDasharray="3 4"
+                strokeWidth={0.8}
+                label={{ value: `Mp=${overshoot.toFixed(1)}%`, position: "right", fontSize: 8, fill: "hsl(var(--destructive))", fontFamily: "monospace" }}
+              />
+              <ReferenceDot
+                x={parseFloat(peakTime.toFixed(4))}
+                y={peakValue}
+                r={4}
+                fill="hsl(var(--destructive))"
+                stroke="hsl(var(--destructive-foreground))"
+                strokeWidth={1}
+              />
+            </>
+          )}
+
+          {/* Peak marker for impulse */}
+          {mode === "impulse" && peakValue !== 0 && (
+            <ReferenceDot
+              x={parseFloat(peakTime.toFixed(4))}
+              y={peakValue}
+              r={4}
+              fill="hsl(var(--accent))"
+              stroke="hsl(var(--accent-foreground))"
+              strokeWidth={1}
+            />
+          )}
+
           <Line type="monotone" dataKey="y" stroke={mode === "step" ? "hsl(var(--primary))" : "hsl(var(--accent))"} strokeWidth={1.5} dot={false} name={mode === "step" ? "y(t)" : "h(t)"} />
         </LineChart>
       </ResponsiveContainer>
