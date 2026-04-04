@@ -1642,6 +1642,15 @@ function NicholsChart({ result }: { result: SolverResult }) {
           <line x1={115} y1={3} x2={127} y2={3} stroke="hsl(var(--chart-4) / 0.4)" strokeWidth={0.5} strokeDasharray="2 4" />
           <text x={131} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">N-circles</text>
         </g>
+
+        {/* Crosshair */}
+        <SvgCrosshairLayer
+          bounds={{ x1: padL, y1: padT, x2: W - padR, y2: H - padB }}
+          fromX={(x) => (phaseMin + ((x - padL) / plotW) * phaseRange).toFixed(1) + "°"}
+          fromY={(y) => (magMax - ((y - padT) / plotH) * magRange).toFixed(1) + " dB"}
+          labelX="∠"
+          labelY="|G|"
+        />
       </svg>
     </div>
   );
