@@ -9,6 +9,71 @@ import {
 } from "recharts";
 import html2canvas from "html2canvas";
 import { Download } from "lucide-react";
+// ─── SVG Crosshair Layer ─────────────────────────────────────────────────────
+
+function SvgCrosshairLayer({
+  bounds,
+  fromX,
+  fromY,
+  labelX = "x",
+  labelY = "y",
+}: {
+  bounds: { x1: number; y1: number; x2: number; y2: number };
+  fromX: (svgX: number) => string;
+  fromY: (svgY: number) => string;
+  labelX?: string;
+  labelY?: string;
+}) {
+  const [pos, setPos] = React.useState<{ x: number; y: number } | null>(null);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent<SVGRectElement>) => {
+    const svg = e.currentTarget.ownerSVGElement;
+    if (!svg) return;
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return;
+    const svgPt = pt.matrixTransform(ctm.inverse());
+    setPos({ x: svgPt.x, y: svgPt.y });
+  }, []);
+
+  const { x1, y1, x2, y2 } = bounds;
+  const inBounds = pos && pos.x >= x1 && pos.x <= x2 && pos.y >= y1 && pos.y <= y2;
+
+  const boxW = 95;
+  const boxH = 22;
+  const bx = pos ? (pos.x + boxW + 12 > x2 ? pos.x - boxW - 8 : pos.x + 8) : 0;
+  const by = pos ? (pos.y - boxH - 4 < y1 ? pos.y + 4 : pos.y - boxH - 4) : 0;
+
+  return (
+    <g>
+      <rect
+        x={x1} y={y1} width={x2 - x1} height={y2 - y1}
+        fill="transparent"
+        onMouseMove={handleMouseMove}
+        onMouseLeave={() => setPos(null)}
+        style={{ cursor: "crosshair" }}
+      />
+      {inBounds && pos && (
+        <>
+          <line x1={pos.x} y1={y1} x2={pos.x} y2={y2}
+            stroke="hsl(var(--foreground) / 0.25)" strokeWidth={0.5} strokeDasharray="3 3" pointerEvents="none" />
+          <line x1={x1} y1={pos.y} x2={x2} y2={pos.y}
+            stroke="hsl(var(--foreground) / 0.25)" strokeWidth={0.5} strokeDasharray="3 3" pointerEvents="none" />
+          <rect x={bx} y={by} width={boxW} height={boxH} rx={3}
+            fill="hsl(var(--card) / 0.92)" stroke="hsl(var(--border))" strokeWidth={0.5} pointerEvents="none" />
+          <text x={bx + 4} y={by + 9} fill="hsl(var(--foreground))" fontSize={7} fontFamily="monospace" pointerEvents="none">
+            {labelX}: {fromX(pos.x)}
+          </text>
+          <text x={bx + 4} y={by + 18} fill="hsl(var(--foreground))" fontSize={7} fontFamily="monospace" pointerEvents="none">
+            {labelY}: {fromY(pos.y)}
+          </text>
+        </>
+      )}
+    </g>
+  );
+}
 
 // ─── Pole-Zero Map (SVG) ─────────────────────────────────────────────────────
 
