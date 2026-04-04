@@ -159,6 +159,15 @@ function PoleZeroMap({ result }: { result: SolverResult }) {
         <circle cx={50} cy={3} r={4} fill="none" stroke="hsl(var(--accent))" strokeWidth={1.5} />
         <text x={58} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Zeros</text>
       </g>
+
+      {/* Crosshair */}
+      <SvgCrosshairLayer
+        bounds={{ x1: 0, y1: 0, x2: W, y2: H }}
+        fromX={(x) => ((x - cx) / scaleVal).toFixed(2)}
+        fromY={(y) => (-(y - cy) / scaleVal).toFixed(2)}
+        labelX="Re"
+        labelY="Im"
+      />
     </svg>
   );
 }
