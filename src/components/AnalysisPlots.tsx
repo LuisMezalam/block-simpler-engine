@@ -294,7 +294,7 @@ function TimeResponsePlot({ result }: { result: SolverResult }) {
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
           <XAxis dataKey="t" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "t (s)", position: "insideBottomRight", offset: -5, fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
           <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
-          <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
+          <Tooltip cursor={{ stroke: "hsl(var(--foreground) / 0.3)", strokeWidth: 1, strokeDasharray: "3 3" }} contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
 
           {/* Settling time 2% band */}
           {mode === "step" && finalValue !== 0 && (
