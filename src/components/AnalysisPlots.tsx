@@ -1482,6 +1482,8 @@ function NicholsChart({ result }: { result: SolverResult }) {
           <text x={16} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">G(jω)</text>
           <line x1={50} y1={3} x2={62} y2={3} stroke="hsl(var(--primary) / 0.3)" strokeWidth={0.8} strokeDasharray="3 4" />
           <text x={66} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">M-circles</text>
+          <line x1={115} y1={3} x2={127} y2={3} stroke="hsl(var(--chart-4) / 0.4)" strokeWidth={0.5} strokeDasharray="2 4" />
+          <text x={131} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">N-circles</text>
         </g>
       </svg>
     </div>
