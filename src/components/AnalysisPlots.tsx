@@ -587,7 +587,7 @@ function BodePlot({ result }: { result: SolverResult }) {
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
               <XAxis dataKey="wLog" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "log₁₀(ω)", position: "insideBottomRight", offset: -5, fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
               <YAxis tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} label={{ value: "deg", angle: -90, position: "insideLeft", fontSize: 9, fill: "hsl(var(--muted-foreground))" }} />
-              <Tooltip contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
+              <Tooltip cursor={{ stroke: "hsl(var(--foreground) / 0.3)", strokeWidth: 1, strokeDasharray: "3 3" }} contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", fontSize: 10, fontFamily: "monospace" }} />
               <ReferenceLine y={-180} stroke="hsl(var(--destructive))" strokeDasharray="5 3" />
               {/* PM annotation: vertical line at ωgc with shaded region from phase to -180° */}
               {gcLog !== null && (
