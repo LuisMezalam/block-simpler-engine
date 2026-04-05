@@ -203,6 +203,10 @@ function PoleZeroMap({ result }: { result: SolverResult }) {
         fromY={(y) => (-(y - cy) / scaleVal).toFixed(2)}
         labelX="Re"
         labelY="Im"
+        curvePoints={[
+          ...result.poles.filter(p => !isNaN(p.re)).map(p => toSvg(p.re, p.im)),
+          ...result.zeros.filter(z => !isNaN(z.re)).map(z => toSvg(z.re, z.im)),
+        ]}
       />
     </svg>
   );
