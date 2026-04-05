@@ -17,14 +17,19 @@ function SvgCrosshairLayer({
   fromY,
   labelX = "x",
   labelY = "y",
+  curvePoints,
+  snapRadius = 20,
 }: {
   bounds: { x1: number; y1: number; x2: number; y2: number };
   fromX: (svgX: number) => string;
   fromY: (svgY: number) => string;
   labelX?: string;
   labelY?: string;
+  curvePoints?: { x: number; y: number }[];
+  snapRadius?: number;
 }) {
   const [pos, setPos] = React.useState<{ x: number; y: number } | null>(null);
+  const [snapped, setSnapped] = React.useState<{ x: number; y: number } | null>(null);
 
   const handleMouseMove = useCallback((e: React.MouseEvent<SVGRectElement>) => {
     const svg = e.currentTarget.ownerSVGElement;
@@ -36,15 +41,41 @@ function SvgCrosshairLayer({
     if (!ctm) return;
     const svgPt = pt.matrixTransform(ctm.inverse());
     setPos({ x: svgPt.x, y: svgPt.y });
-  }, []);
+
+    // Snap to nearest curve point
+    if (curvePoints && curvePoints.length > 0) {
+      let bestDist = Infinity;
+      let bestPt: { x: number; y: number } | null = null;
+      for (let i = 0; i < curvePoints.length; i++) {
+        const cp = curvePoints[i];
+        const dx = cp.x - svgPt.x;
+        const dy = cp.y - svgPt.y;
+        const d = dx * dx + dy * dy;
+        if (d < bestDist) {
+          bestDist = d;
+          bestPt = cp;
+        }
+      }
+      if (bestPt && Math.sqrt(bestDist) <= snapRadius) {
+        setSnapped(bestPt);
+      } else {
+        setSnapped(null);
+      }
+    } else {
+      setSnapped(null);
+    }
+  }, [curvePoints, snapRadius]);
 
   const { x1, y1, x2, y2 } = bounds;
   const inBounds = pos && pos.x >= x1 && pos.x <= x2 && pos.y >= y1 && pos.y <= y2;
 
+  // Use snapped position for readout if available, otherwise raw cursor
+  const display = snapped || pos;
+
   const boxW = 95;
   const boxH = 22;
-  const bx = pos ? (pos.x + boxW + 12 > x2 ? pos.x - boxW - 8 : pos.x + 8) : 0;
-  const by = pos ? (pos.y - boxH - 4 < y1 ? pos.y + 4 : pos.y - boxH - 4) : 0;
+  const bx = display ? (display.x + boxW + 12 > x2 ? display.x - boxW - 8 : display.x + 8) : 0;
+  const by = display ? (display.y - boxH - 4 < y1 ? display.y + 4 : display.y - boxH - 4) : 0;
 
   return (
     <g>
@@ -52,22 +83,27 @@ function SvgCrosshairLayer({
         x={x1} y={y1} width={x2 - x1} height={y2 - y1}
         fill="transparent"
         onMouseMove={handleMouseMove}
-        onMouseLeave={() => setPos(null)}
+        onMouseLeave={() => { setPos(null); setSnapped(null); }}
         style={{ cursor: "crosshair" }}
       />
-      {inBounds && pos && (
+      {inBounds && display && (
         <>
-          <line x1={pos.x} y1={y1} x2={pos.x} y2={y2}
+          <line x1={display.x} y1={y1} x2={display.x} y2={y2}
             stroke="hsl(var(--foreground) / 0.25)" strokeWidth={0.5} strokeDasharray="3 3" pointerEvents="none" />
-          <line x1={x1} y1={pos.y} x2={x2} y2={pos.y}
+          <line x1={x1} y1={display.y} x2={x2} y2={display.y}
             stroke="hsl(var(--foreground) / 0.25)" strokeWidth={0.5} strokeDasharray="3 3" pointerEvents="none" />
+          {/* Snap indicator dot */}
+          {snapped && (
+            <circle cx={snapped.x} cy={snapped.y} r={3.5}
+              fill="hsl(var(--accent))" stroke="hsl(var(--background))" strokeWidth={1} pointerEvents="none" />
+          )}
           <rect x={bx} y={by} width={boxW} height={boxH} rx={3}
-            fill="hsl(var(--card) / 0.92)" stroke="hsl(var(--border))" strokeWidth={0.5} pointerEvents="none" />
+            fill="hsl(var(--card) / 0.92)" stroke={snapped ? "hsl(var(--accent))" : "hsl(var(--border))"} strokeWidth={0.5} pointerEvents="none" />
           <text x={bx + 4} y={by + 9} fill="hsl(var(--foreground))" fontSize={7} fontFamily="monospace" pointerEvents="none">
-            {labelX}: {fromX(pos.x)}
+            {labelX}: {fromX(display.x)}
           </text>
           <text x={bx + 4} y={by + 18} fill="hsl(var(--foreground))" fontSize={7} fontFamily="monospace" pointerEvents="none">
-            {labelY}: {fromY(pos.y)}
+            {labelY}: {fromY(display.y)}
           </text>
         </>
       )}
@@ -167,6 +203,10 @@ function PoleZeroMap({ result }: { result: SolverResult }) {
         fromY={(y) => (-(y - cy) / scaleVal).toFixed(2)}
         labelX="Re"
         labelY="Im"
+        curvePoints={[
+          ...result.poles.filter(p => !isNaN(p.re)).map(p => toSvg(p.re, p.im)),
+          ...result.zeros.filter(z => !isNaN(z.re)).map(z => toSvg(z.re, z.im)),
+        ]}
       />
     </svg>
   );
@@ -787,6 +827,7 @@ function NyquistPlot({ result }: { result: SolverResult }) {
         fromY={(y) => (-(y - cy) / scale).toFixed(2)}
         labelX="Re"
         labelY="Im"
+        curvePoints={points.map(p => ({ x: toX(Math.max(-range, Math.min(range, p.re))), y: toY(Math.max(-range, Math.min(range, p.im))) }))}
       />
     </svg>
   );
@@ -1234,6 +1275,7 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
           fromY={(y) => (-(y - cy) / scale).toFixed(2)}
           labelX="Re"
           labelY="Im"
+          curvePoints={loci.flatMap(branch => branch.filter(p => Math.abs(p.re) < maxAbs * 1.5 && Math.abs(p.im) < maxAbs * 1.5).map(p => ({ x: toX(p.re), y: toY(p.im) })))}
         />
       </svg>
 
@@ -1650,6 +1692,7 @@ function NicholsChart({ result }: { result: SolverResult }) {
           fromY={(y) => (magMax - ((y - padT) / plotH) * magRange).toFixed(1) + " dB"}
           labelX="∠"
           labelY="|G|"
+          curvePoints={data.map(p => ({ x: toX(Math.max(phaseMin, Math.min(phaseMax, p.phaseDeg))), y: toY(Math.max(magMin, Math.min(magMax, p.magDb))) }))}
         />
       </svg>
     </div>
