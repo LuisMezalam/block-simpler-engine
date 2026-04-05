@@ -812,6 +812,38 @@ function NyquistPlot({ result }: { result: SolverResult }) {
         );
       })()}
 
+      {/* Frequency labels at decade points */}
+      {(() => {
+        const decadeExps = [-2, -1, 0, 1, 2, 3];
+        const labels: React.ReactNode[] = [];
+        for (const exp of decadeExps) {
+          const targetW = Math.pow(10, exp);
+          // Find closest point
+          let bestIdx = -1, bestDist = Infinity;
+          for (let i = 0; i < points.length; i++) {
+            const d = Math.abs(Math.log10(points[i].w) - exp);
+            if (d < bestDist) { bestDist = d; bestIdx = i; }
+          }
+          if (bestIdx < 0 || bestDist > 0.05) continue;
+          const p = points[bestIdx];
+          const px = toX(Math.max(-range, Math.min(range, p.re)));
+          const py = toY(Math.max(-range, Math.min(range, p.im)));
+          // Skip if out of visible area
+          if (px < 5 || px > W - 5 || py < 5 || py > H - 5) continue;
+          const wLabel = targetW >= 1 ? `${targetW}` : targetW.toFixed(Math.abs(exp));
+          labels.push(
+            <g key={`wl${exp}`}>
+              <circle cx={px} cy={py} r={2} fill="hsl(var(--accent))" />
+              <text x={px + 4} y={py - 4} fill="hsl(var(--accent))" fontSize={6.5} fontFamily="monospace"
+                stroke="hsl(var(--background))" strokeWidth={2} paintOrder="stroke">
+                ω={wLabel}
+              </text>
+            </g>
+          );
+        }
+        return labels;
+      })()}
+
       {/* Legend */}
       <g transform={`translate(8, ${H - 20})`}>
         <line x1={0} y1={3} x2={12} y2={3} stroke="hsl(var(--accent))" strokeWidth={1.5} />
