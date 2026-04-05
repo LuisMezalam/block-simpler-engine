@@ -827,6 +827,7 @@ function NyquistPlot({ result }: { result: SolverResult }) {
         fromY={(y) => (-(y - cy) / scale).toFixed(2)}
         labelX="Re"
         labelY="Im"
+        curvePoints={points.map(p => ({ x: toX(Math.max(-range, Math.min(range, p.re))), y: toY(Math.max(-range, Math.min(range, p.im))) }))}
       />
     </svg>
   );
@@ -1274,6 +1275,7 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
           fromY={(y) => (-(y - cy) / scale).toFixed(2)}
           labelX="Re"
           labelY="Im"
+          curvePoints={loci.flatMap(branch => branch.filter(p => Math.abs(p.re) < maxAbs * 1.5 && Math.abs(p.im) < maxAbs * 1.5).map(p => ({ x: toX(p.re), y: toY(p.im) })))}
         />
       </svg>
 
@@ -1690,6 +1692,7 @@ function NicholsChart({ result }: { result: SolverResult }) {
           fromY={(y) => (magMax - ((y - padT) / plotH) * magRange).toFixed(1) + " dB"}
           labelX="∠"
           labelY="|G|"
+          curvePoints={data.map(p => ({ x: toX(Math.max(phaseMin, Math.min(phaseMax, p.phaseDeg))), y: toY(Math.max(magMin, Math.min(magMax, p.magDb))) }))}
         />
       </svg>
     </div>
