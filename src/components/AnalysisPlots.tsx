@@ -697,7 +697,7 @@ function BodePlot({ result }: { result: SolverResult }) {
 function NyquistPlot({ result }: { result: SolverResult }) {
   const points = useMemo(() => {
     const { num, den } = result.equivalentTF;
-    const pts: { re: number; im: number }[] = [];
+    const pts: { re: number; im: number; w: number }[] = [];
 
     for (let exp = -3; exp <= 4; exp += 0.02) {
       const w = Math.pow(10, exp);
@@ -728,7 +728,7 @@ function NyquistPlot({ result }: { result: SolverResult }) {
       const gRe = (numRe * denRe + numIm * denIm) / dMagSq;
       const gIm = (numIm * denRe - numRe * denIm) / dMagSq;
       if (Math.abs(gRe) < 1e6 && Math.abs(gIm) < 1e6) {
-        pts.push({ re: gRe, im: gIm });
+        pts.push({ re: gRe, im: gIm, w });
       }
     }
     return pts;
@@ -810,6 +810,38 @@ function NyquistPlot({ result }: { result: SolverResult }) {
             fill="hsl(var(--accent))"
           />
         );
+      })()}
+
+      {/* Frequency labels at decade points */}
+      {(() => {
+        const decadeExps = [-2, -1, 0, 1, 2, 3];
+        const labels: React.ReactNode[] = [];
+        for (const exp of decadeExps) {
+          const targetW = Math.pow(10, exp);
+          // Find closest point
+          let bestIdx = -1, bestDist = Infinity;
+          for (let i = 0; i < points.length; i++) {
+            const d = Math.abs(Math.log10(points[i].w) - exp);
+            if (d < bestDist) { bestDist = d; bestIdx = i; }
+          }
+          if (bestIdx < 0 || bestDist > 0.05) continue;
+          const p = points[bestIdx];
+          const px = toX(Math.max(-range, Math.min(range, p.re)));
+          const py = toY(Math.max(-range, Math.min(range, p.im)));
+          // Skip if out of visible area
+          if (px < 5 || px > W - 5 || py < 5 || py > H - 5) continue;
+          const wLabel = targetW >= 1 ? `${targetW}` : targetW.toFixed(Math.abs(exp));
+          labels.push(
+            <g key={`wl${exp}`}>
+              <circle cx={px} cy={py} r={2} fill="hsl(var(--accent))" />
+              <text x={px + 4} y={py - 4} fill="hsl(var(--accent))" fontSize={6.5} fontFamily="monospace"
+                stroke="hsl(var(--background))" strokeWidth={2} paintOrder="stroke">
+                ω={wLabel}
+              </text>
+            </g>
+          );
+        }
+        return labels;
       })()}
 
       {/* Legend */}
@@ -1644,6 +1676,36 @@ function NicholsChart({ result }: { result: SolverResult }) {
 
         {/* Open-loop curve */}
         <path d={pathD} fill="none" stroke="hsl(var(--accent))" strokeWidth={2} />
+
+        {/* Frequency labels at decade points */}
+        {(() => {
+          const decadeExps = [-2, -1, 0, 1, 2, 3];
+          const labels: React.ReactNode[] = [];
+          for (const exp of decadeExps) {
+            const targetW = Math.pow(10, exp);
+            let bestIdx = -1, bestDist = Infinity;
+            for (let i = 0; i < data.length; i++) {
+              const d = Math.abs(Math.log10(data[i].w) - exp);
+              if (d < bestDist) { bestDist = d; bestIdx = i; }
+            }
+            if (bestIdx < 0 || bestDist > 0.05) continue;
+            const p = data[bestIdx];
+            const px = toX(Math.max(phaseMin, Math.min(phaseMax, p.phaseDeg)));
+            const py = toY(Math.max(magMin, Math.min(magMax, p.magDb)));
+            if (px < padL || px > W - padR || py < padT || py > H - padB) continue;
+            const wLabel = targetW >= 1 ? `${targetW}` : targetW.toFixed(Math.abs(exp));
+            labels.push(
+              <g key={`wl${exp}`}>
+                <circle cx={px} cy={py} r={2.5} fill="hsl(var(--accent))" />
+                <text x={px + 5} y={py - 5} fill="hsl(var(--accent))" fontSize={7} fontFamily="monospace"
+                  stroke="hsl(var(--background))" strokeWidth={2.5} paintOrder="stroke">
+                  ω={wLabel}
+                </text>
+              </g>
+            );
+          }
+          return labels;
+        })()}
 
         {/* Direction arrow */}
         {arrowData && (() => {
