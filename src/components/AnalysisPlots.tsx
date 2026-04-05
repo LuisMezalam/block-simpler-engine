@@ -1677,6 +1677,36 @@ function NicholsChart({ result }: { result: SolverResult }) {
         {/* Open-loop curve */}
         <path d={pathD} fill="none" stroke="hsl(var(--accent))" strokeWidth={2} />
 
+        {/* Frequency labels at decade points */}
+        {(() => {
+          const decadeExps = [-2, -1, 0, 1, 2, 3];
+          const labels: React.ReactNode[] = [];
+          for (const exp of decadeExps) {
+            const targetW = Math.pow(10, exp);
+            let bestIdx = -1, bestDist = Infinity;
+            for (let i = 0; i < data.length; i++) {
+              const d = Math.abs(Math.log10(data[i].w) - exp);
+              if (d < bestDist) { bestDist = d; bestIdx = i; }
+            }
+            if (bestIdx < 0 || bestDist > 0.05) continue;
+            const p = data[bestIdx];
+            const px = toX(Math.max(phaseMin, Math.min(phaseMax, p.phaseDeg)));
+            const py = toY(Math.max(magMin, Math.min(magMax, p.magDb)));
+            if (px < padL || px > W - padR || py < padT || py > H - padB) continue;
+            const wLabel = targetW >= 1 ? `${targetW}` : targetW.toFixed(Math.abs(exp));
+            labels.push(
+              <g key={`wl${exp}`}>
+                <circle cx={px} cy={py} r={2.5} fill="hsl(var(--accent))" />
+                <text x={px + 5} y={py - 5} fill="hsl(var(--accent))" fontSize={7} fontFamily="monospace"
+                  stroke="hsl(var(--background))" strokeWidth={2.5} paintOrder="stroke">
+                  ω={wLabel}
+                </text>
+              </g>
+            );
+          }
+          return labels;
+        })()}
+
         {/* Direction arrow */}
         {arrowData && (() => {
           const dx = arrowData.x2 - arrowData.x1;
