@@ -697,7 +697,7 @@ function BodePlot({ result }: { result: SolverResult }) {
 function NyquistPlot({ result }: { result: SolverResult }) {
   const points = useMemo(() => {
     const { num, den } = result.equivalentTF;
-    const pts: { re: number; im: number }[] = [];
+    const pts: { re: number; im: number; w: number }[] = [];
 
     for (let exp = -3; exp <= 4; exp += 0.02) {
       const w = Math.pow(10, exp);
@@ -728,7 +728,7 @@ function NyquistPlot({ result }: { result: SolverResult }) {
       const gRe = (numRe * denRe + numIm * denIm) / dMagSq;
       const gIm = (numIm * denRe - numRe * denIm) / dMagSq;
       if (Math.abs(gRe) < 1e6 && Math.abs(gIm) < 1e6) {
-        pts.push({ re: gRe, im: gIm });
+        pts.push({ re: gRe, im: gIm, w });
       }
     }
     return pts;
