@@ -266,13 +266,13 @@ function TimeResponsePlot({ result }: { result: SolverResult }) {
     const finalValue = points.length > 0 ? points[points.length - 1].y : 0;
     let peakValue = -Infinity, peakTime = 0;
     let riseTime = 0, settlingTime = 0;
-    let foundRise10 = false, rise10t = 0;
+    let foundRise10 = false, rise10t = 0, rise90t = 0;
 
     for (const p of points) {
       if (p.y > peakValue) { peakValue = p.y; peakTime = p.t; }
       if (mode === "step") {
         if (!foundRise10 && finalValue !== 0 && p.y >= 0.1 * finalValue) { rise10t = p.t; foundRise10 = true; }
-        if (foundRise10 && riseTime === 0 && p.y >= 0.9 * finalValue) { riseTime = p.t - rise10t; }
+        if (foundRise10 && riseTime === 0 && p.y >= 0.9 * finalValue) { rise90t = p.t; riseTime = rise90t - rise10t; }
       }
     }
 
@@ -287,7 +287,7 @@ function TimeResponsePlot({ result }: { result: SolverResult }) {
       ? Math.max(0, ((peakValue - finalValue) / Math.abs(finalValue)) * 100)
       : 0;
 
-    return { data: points, metrics: { finalValue, overshoot, riseTime, settlingTime, peakTime, peakValue } };
+    return { data: points, metrics: { finalValue, overshoot, riseTime, settlingTime, peakTime, peakValue, rise10t, rise90t } };
   }, [result, mode]);
 
   if (data.length === 0) return null;
