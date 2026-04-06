@@ -365,7 +365,46 @@ function TimeResponsePlot({ result }: { result: SolverResult }) {
             />
           )}
 
-          {/* Final value line */}
+          {/* Rise time 10%-90% vertical markers (step only) */}
+          {mode === "step" && riseTime > 0 && (
+            <>
+              <ReferenceLine
+                x={parseFloat(rise10t.toFixed(4))}
+                stroke="hsl(var(--chart-2))"
+                strokeDasharray="3 3"
+                strokeWidth={1}
+                label={{ value: "10%", position: "top", fontSize: 7, fill: "hsl(var(--chart-2))", fontFamily: "monospace" }}
+              />
+              <ReferenceLine
+                x={parseFloat(rise90t.toFixed(4))}
+                stroke="hsl(var(--chart-2))"
+                strokeDasharray="3 3"
+                strokeWidth={1}
+                label={{ value: "90%", position: "top", fontSize: 7, fill: "hsl(var(--chart-2))", fontFamily: "monospace" }}
+              />
+              {/* 10% and 90% horizontal reference lines */}
+              <ReferenceLine
+                y={0.1 * finalValue}
+                stroke="hsl(var(--chart-2) / 0.3)"
+                strokeDasharray="2 4"
+                strokeWidth={0.5}
+              />
+              <ReferenceLine
+                y={0.9 * finalValue}
+                stroke="hsl(var(--chart-2) / 0.3)"
+                strokeDasharray="2 4"
+                strokeWidth={0.5}
+              />
+              {/* Shaded rise time region */}
+              <ReferenceArea
+                x1={parseFloat(rise10t.toFixed(4))}
+                x2={parseFloat(rise90t.toFixed(4))}
+                fill="hsl(var(--chart-2) / 0.06)"
+                stroke="none"
+              />
+            </>
+          )}
+
           {mode === "step" && <ReferenceLine y={finalValue} stroke="hsl(var(--warning))" strokeDasharray="5 3" strokeWidth={1} />}
           <ReferenceLine y={0} stroke="hsl(var(--border))" />
 
