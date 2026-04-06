@@ -292,7 +292,7 @@ function TimeResponsePlot({ result }: { result: SolverResult }) {
 
   if (data.length === 0) return null;
 
-  const { finalValue, overshoot, riseTime, settlingTime, peakTime, peakValue } = metrics;
+  const { finalValue, overshoot, riseTime, settlingTime, peakTime, peakValue, rise10t, rise90t } = metrics;
 
   const stepMetrics = [
     { label: "Overshoot", value: `${overshoot.toFixed(1)}%`, warn: overshoot > 25 },
