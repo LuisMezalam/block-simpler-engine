@@ -818,7 +818,6 @@ function NyquistPlot({ result }: { result: SolverResult }) {
         const labels: React.ReactNode[] = [];
         for (const exp of decadeExps) {
           const targetW = Math.pow(10, exp);
-          // Find closest point
           let bestIdx = -1, bestDist = Infinity;
           for (let i = 0; i < points.length; i++) {
             const d = Math.abs(Math.log10(points[i].w) - exp);
@@ -828,16 +827,32 @@ function NyquistPlot({ result }: { result: SolverResult }) {
           const p = points[bestIdx];
           const px = toX(Math.max(-range, Math.min(range, p.re)));
           const py = toY(Math.max(-range, Math.min(range, p.im)));
-          // Skip if out of visible area
           if (px < 5 || px > W - 5 || py < 5 || py > H - 5) continue;
           const wLabel = targetW >= 1 ? `${targetW}` : targetW.toFixed(Math.abs(exp));
+          const mag = Math.sqrt(p.re * p.re + p.im * p.im);
+          const magDb = (20 * Math.log10(mag || 1e-30)).toFixed(1);
+          const phaseDeg = (Math.atan2(p.im, p.re) * 180 / Math.PI).toFixed(1);
+          const tipW = 100, tipH = 30;
+          const tipX = px + tipW + 8 > W ? px - tipW - 4 : px + 8;
+          const tipY = py - tipH - 4 < 0 ? py + 8 : py - tipH - 4;
           labels.push(
-            <g key={`wl${exp}`}>
+            <g key={`wl${exp}`} className="group/wl">
               <circle cx={px} cy={py} r={2} fill="hsl(var(--accent))" />
+              <circle cx={px} cy={py} r={10} fill="transparent" className="cursor-pointer" />
               <text x={px + 4} y={py - 4} fill="hsl(var(--accent))" fontSize={6.5} fontFamily="monospace"
-                stroke="hsl(var(--background))" strokeWidth={2} paintOrder="stroke">
+                stroke="hsl(var(--background))" strokeWidth={2} paintOrder="stroke" pointerEvents="none">
                 ω={wLabel}
               </text>
+              <g className="opacity-0 group-hover/wl:opacity-100 transition-opacity pointer-events-none">
+                <rect x={tipX} y={tipY} width={tipW} height={tipH} rx={3}
+                  fill="hsl(var(--popover))" stroke="hsl(var(--border))" strokeWidth={0.5} />
+                <text x={tipX + 4} y={tipY + 11} fill="hsl(var(--popover-foreground))" fontSize={6} fontFamily="monospace">
+                  |G|={magDb} dB
+                </text>
+                <text x={tipX + 4} y={tipY + 22} fill="hsl(var(--popover-foreground))" fontSize={6} fontFamily="monospace">
+                  ∠G={phaseDeg}°
+                </text>
+              </g>
             </g>
           );
         }
@@ -1694,13 +1709,27 @@ function NicholsChart({ result }: { result: SolverResult }) {
             const py = toY(Math.max(magMin, Math.min(magMax, p.magDb)));
             if (px < padL || px > W - padR || py < padT || py > H - padB) continue;
             const wLabel = targetW >= 1 ? `${targetW}` : targetW.toFixed(Math.abs(exp));
+            const tipW = 110, tipH = 30;
+            const tipX = px + tipW + 8 > W - padR ? px - tipW - 4 : px + 8;
+            const tipY = py - tipH - 4 < padT ? py + 8 : py - tipH - 4;
             labels.push(
-              <g key={`wl${exp}`}>
+              <g key={`wl${exp}`} className="group/wl">
                 <circle cx={px} cy={py} r={2.5} fill="hsl(var(--accent))" />
+                <circle cx={px} cy={py} r={12} fill="transparent" className="cursor-pointer" />
                 <text x={px + 5} y={py - 5} fill="hsl(var(--accent))" fontSize={7} fontFamily="monospace"
-                  stroke="hsl(var(--background))" strokeWidth={2.5} paintOrder="stroke">
+                  stroke="hsl(var(--background))" strokeWidth={2.5} paintOrder="stroke" pointerEvents="none">
                   ω={wLabel}
                 </text>
+                <g className="opacity-0 group-hover/wl:opacity-100 transition-opacity pointer-events-none">
+                  <rect x={tipX} y={tipY} width={tipW} height={tipH} rx={3}
+                    fill="hsl(var(--popover))" stroke="hsl(var(--border))" strokeWidth={0.5} />
+                  <text x={tipX + 4} y={tipY + 11} fill="hsl(var(--popover-foreground))" fontSize={6.5} fontFamily="monospace">
+                    |G|={p.magDb.toFixed(1)} dB
+                  </text>
+                  <text x={tipX + 4} y={tipY + 22} fill="hsl(var(--popover-foreground))" fontSize={6.5} fontFamily="monospace">
+                    ∠G={p.phaseDeg.toFixed(1)}°
+                  </text>
+                </g>
               </g>
             );
           }
