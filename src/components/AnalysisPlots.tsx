@@ -604,23 +604,48 @@ function BodePlot({ result }: { result: SolverResult }) {
 
   const { gcLog, pcLog, gmDb, pmDeg, magAtPcDb, phaseAtGcDeg } = margins;
 
+  const isStable = (gmDb === Infinity || gmDb > 0) && (pmDeg === Infinity || pmDeg > 0);
+  const gmColor = gmDb === Infinity ? "text-muted-foreground" : gmDb > 0 ? "text-green-400" : "text-destructive";
+  const pmColor = pmDeg === Infinity ? "text-muted-foreground" : pmDeg > 0 ? "text-green-400" : "text-destructive";
+
   return (
     <div className="space-y-1">
-      <div className="flex gap-3 px-2 py-1 text-[9px] font-mono text-muted-foreground items-center">
-        <span>GM: <span className={gmDb !== Infinity ? (gmDb > 0 ? "text-green-400" : "text-destructive") : ""}>{gmDb === Infinity ? "∞" : `${gmDb.toFixed(1)} dB`}</span></span>
-        <span>PM: <span className={pmDeg !== Infinity ? (pmDeg > 0 ? "text-green-400" : "text-destructive") : ""}>{pmDeg === Infinity ? "∞" : `${pmDeg.toFixed(1)}°`}</span></span>
-        {gcLog !== null && <span>ωgc: <span className="text-foreground">{Math.pow(10, gcLog).toFixed(2)}</span></span>}
-        {pcLog !== null && <span>ωpc: <span className="text-foreground">{Math.pow(10, pcLog).toFixed(2)}</span></span>}
+      <div className="flex items-center px-2 py-1">
         <button
           onClick={() => setShowTable(!showTable)}
-          className={`ml-auto text-[8px] px-1.5 py-0.5 rounded ${showTable ? "bg-primary text-primary-foreground" : "bg-muted/50 hover:bg-muted"}`}
+          className={`ml-auto text-[8px] px-1.5 py-0.5 rounded font-mono ${showTable ? "bg-primary text-primary-foreground" : "bg-muted/50 hover:bg-muted text-muted-foreground"}`}
         >
           {showTable ? "PLOT" : "TABLE"}
         </button>
       </div>
 
       {!showTable ? (
-        <>
+        <div className="relative">
+          {/* Stability margins badge overlay */}
+          <div className="absolute top-1 right-3 z-10 flex items-center gap-1.5">
+            <div className={`flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[9px] font-mono backdrop-blur-sm border ${
+              isStable
+                ? "bg-green-950/70 border-green-500/30"
+                : "bg-red-950/70 border-destructive/40"
+            }`}>
+              <span className={`text-[8px] font-bold tracking-wider ${isStable ? "text-green-400" : "text-destructive"}`}>
+                {isStable ? "STABLE" : "UNSTABLE"}
+              </span>
+              <span className="w-px h-3 bg-border" />
+              <span className="text-muted-foreground">GM</span>
+              <span className={gmColor}>{gmDb === Infinity ? "∞" : `${gmDb.toFixed(1)}dB`}</span>
+              {pcLog !== null && (
+                <span className="text-muted-foreground/60">@{Math.pow(10, pcLog).toFixed(1)}</span>
+              )}
+              <span className="w-px h-3 bg-border" />
+              <span className="text-muted-foreground">PM</span>
+              <span className={pmColor}>{pmDeg === Infinity ? "∞" : `${pmDeg.toFixed(1)}°`}</span>
+              {gcLog !== null && (
+                <span className="text-muted-foreground/60">@{Math.pow(10, gcLog).toFixed(1)}</span>
+              )}
+            </div>
+          </div>
+
           {/* Magnitude plot */}
           <ResponsiveContainer width="100%" height={140}>
             <LineChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
@@ -691,7 +716,7 @@ function BodePlot({ result }: { result: SolverResult }) {
               <Line type="monotone" dataKey="phase" stroke="hsl(var(--primary))" strokeWidth={1.5} dot={false} name="∠G(jω) °" />
             </LineChart>
           </ResponsiveContainer>
-        </>
+        </div>
       ) : (
         <div className="overflow-auto max-h-[280px]">
           <table className="w-full text-[9px] font-mono">
