@@ -716,7 +716,7 @@ function BodePlot({ result }: { result: SolverResult }) {
               <Line type="monotone" dataKey="phase" stroke="hsl(var(--primary))" strokeWidth={1.5} dot={false} name="∠G(jω) °" />
             </LineChart>
           </ResponsiveContainer>
-        </>
+        </div>
       ) : (
         <div className="overflow-auto max-h-[280px]">
           <table className="w-full text-[9px] font-mono">
