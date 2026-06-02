@@ -127,7 +127,7 @@ export function monic(p: Poly): Poly {
 /** Polynomial division: returns [quotient, remainder] such that a = q*b + r */
 export function divmod(a: Poly, b: Poly): [Poly, Poly] {
   if (isZero(b)) throw new Error("Division by zero polynomial");
-  let r = [...a.coeffs];
+  const r = [...a.coeffs];
   const q: number[] = new Array(Math.max(0, a.coeffs.length - b.coeffs.length + 1)).fill(0);
   const lb = leadingCoeff(b);
 
@@ -205,8 +205,9 @@ export function tf(num: Poly, den: Poly): TypedTF {
 }
 
 /** Parse a simple polynomial string into a Poly.
- *  Supports: constants, "s", "s^n", "a*s^n", "as^n", sums/differences.
- *  e.g. "s^2 + 3s + 2", "2s + 1", "K", "10"
+ *  Supports constants, "s", "s^n", "a*s^n", "as^n", sums/differences,
+ *  and numeric coefficient expressions after gain-tuner substitution.
+ *  e.g. "s^2 + 3s + 2", "2*0.5*s + 1", "2/1"
  */
 export function parsePoly(expr: string): Poly {
   const s = expr.trim();
@@ -239,32 +240,50 @@ function parseTerm(term: string): Poly {
   const body = negative ? t.slice(1) : t;
 
   // Patterns: "s^n", "s", "k*s^n", "ks^n", "k"
-  const sExp = /^([0-9.]*)\*?s\^([0-9]+)$/i;
-  const sLin = /^([0-9.]*)\*?s$/i;
-  const constant = /^([0-9.]+)$/;
+  const sExp = /^(.+?)\*?s\^([0-9]+)$/i;
+  const sLin = /^(.+?)\*?s$/i;
+  const bareSExp = /^s\^([0-9]+)$/i;
+  const bareS = /^s$/i;
 
   let p: Poly;
 
   const mExp = body.match(sExp);
   const mLin = body.match(sLin);
-  const mConst = body.match(constant);
+  const mBareExp = body.match(bareSExp);
+  const mBareS = body.match(bareS);
 
-  if (mExp) {
-    const k = mExp[1] === "" ? 1 : parseFloat(mExp[1]);
+  if (mBareExp) {
+    const n = parseInt(mBareExp[1]);
+    p = monomial(1, n);
+  } else if (mBareS) {
+    p = monomial(1, 1);
+  } else if (mExp) {
+    const k = evalNumericFactor(mExp[1].replace(/\*$/, ""));
     const n = parseInt(mExp[2]);
     p = monomial(k, n);
   } else if (mLin) {
-    const k = mLin[1] === "" ? 1 : parseFloat(mLin[1]);
+    const k = evalNumericFactor(mLin[1].replace(/\*$/, ""));
     p = monomial(k, 1);
-  } else if (mConst) {
-    p = poly([parseFloat(mConst[1])]);
+  } else if (body.toLowerCase().includes("s")) {
+    throw new Error(`Unsupported polynomial term "${term}". Expected formats like "2*s^2" or "2s".`);
   } else {
-    // Unrecognized term — treat as symbolic constant placeholder (degree 0)
-    // Return a symbolic placeholder poly([NaN]) — caller should handle
-    p = poly([1]);
+    p = poly([evalNumericFactor(body)]);
   }
 
   return negative ? scale(p, -1) : p;
+}
+
+function evalNumericFactor(expr: string): number {
+  const compact = expr.replace(/\s+/g, "").replace(/\^/g, "**");
+  if (!compact || !/^[0-9.+\-*/()]+$/.test(compact)) {
+    throw new Error(`Unsupported symbolic polynomial term "${expr}". Tune or replace symbolic parameters before analyzing.`);
+  }
+
+  const value = Function(`"use strict"; return (${compact});`)();
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`Invalid numeric polynomial term "${expr}".`);
+  }
+  return value;
 }
 
 /** Format a TypedTF as { num: string, den: string } for display */

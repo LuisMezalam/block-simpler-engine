@@ -9,12 +9,18 @@ export type IdentityCategory =
   | "feedback"
   | "algebraic"
   | "moving"
-  | "signal_flow";
+  | "signal_flow"
+  | "controllers"
+  | "course_checks";
+
+export type IdentitySupport = "live" | "partial" | "reference";
 
 export type Identity = {
   id: string;
   name: string;
   category: IdentityCategory;
+  support: IdentitySupport;
+  toolPath?: string;
   description: string;
   formula: string;
   equivalent: string;
@@ -27,6 +33,8 @@ export type Identity = {
 export const IDENTITIES: Identity[] = [
   {
     id: "series_2",
+    support: "live",
+    toolPath: "Calculator, Diagram Editor",
     name: "Series (Cascade) - Two Blocks",
     category: "cascade",
     description: "Two transfer functions connected in series: output of G1 feeds into G2.",
@@ -49,6 +57,8 @@ export const IDENTITIES: Identity[] = [
   },
   {
     id: "series_n",
+    support: "live",
+    toolPath: "Calculator, Diagram Editor",
     name: "Series (Cascade) - N Blocks",
     category: "cascade",
     description: "N transfer functions in series reduce to a single equivalent block.",
@@ -69,6 +79,8 @@ export const IDENTITIES: Identity[] = [
   },
   {
     id: "parallel_2",
+    support: "live",
+    toolPath: "Calculator, Diagram Editor",
     name: "Parallel Connection - Two Blocks",
     category: "parallel",
     description: "Two blocks share the same input U(s); outputs are summed at a junction.",
@@ -89,6 +101,8 @@ export const IDENTITIES: Identity[] = [
   },
   {
     id: "parallel_subtraction",
+    support: "partial",
+    toolPath: "Diagram sign toggles; sidebar calculator is addition-only",
     name: "Parallel with Subtraction",
     category: "parallel",
     description: "Two blocks in parallel where one is subtracted at the summing junction.",
@@ -106,6 +120,8 @@ export const IDENTITIES: Identity[] = [
   },
   {
     id: "feedback_negative",
+    support: "live",
+    toolPath: "Calculator, Diagram Editor",
     name: "Negative Feedback (Closed-Loop)",
     category: "feedback",
     description: "The fundamental feedback control loop. Output fed back through H(s) and subtracted from reference R(s).",
@@ -132,6 +148,8 @@ export const IDENTITIES: Identity[] = [
   },
   {
     id: "unity_feedback",
+    support: "live",
+    toolPath: "Calculator, Diagram Editor",
     name: "Unity Negative Feedback (H(s) = 1)",
     category: "feedback",
     description: "Special case of negative feedback with H(s) = 1. Most common in basic control design.",
@@ -153,6 +171,8 @@ export const IDENTITIES: Identity[] = [
   },
   {
     id: "positive_feedback",
+    support: "live",
+    toolPath: "Calculator, Diagram Editor",
     name: "Positive Feedback",
     category: "feedback",
     description: "Feedback where the fed-back signal is ADDED to the reference. Generally destabilizing.",
@@ -176,6 +196,8 @@ export const IDENTITIES: Identity[] = [
   },
   {
     id: "move_pickoff_forward",
+    support: "reference",
+    toolPath: "Library reference",
     name: "Move Pick-off Point Forward (Past a Block)",
     category: "moving",
     description: "Moving a signal pick-off point downstream past a block G(s) requires dividing the branch by G(s).",
@@ -196,6 +218,8 @@ export const IDENTITIES: Identity[] = [
   },
   {
     id: "move_summing_forward",
+    support: "reference",
+    toolPath: "Library reference",
     name: "Move Summing Junction Forward (Past a Block)",
     category: "moving",
     description: "Moving a summing junction past a block G(s) in the forward direction.",
@@ -214,6 +238,8 @@ export const IDENTITIES: Identity[] = [
   },
   {
     id: "gain_absorption",
+    support: "partial",
+    toolPath: "Series simplifier and gain tuner",
     name: "Gain Absorption",
     category: "algebraic",
     description: "A constant gain K can be absorbed into adjacent transfer functions.",
@@ -234,6 +260,8 @@ export const IDENTITIES: Identity[] = [
   },
   {
     id: "masons_rule",
+    support: "reference",
+    toolPath: "Library reference",
     name: "Mason's Gain Formula (Signal Flow Graph)",
     category: "signal_flow",
     description: "General formula for computing transfer function from any signal flow graph.",
@@ -255,6 +283,8 @@ export const IDENTITIES: Identity[] = [
   },
   {
     id: "final_value",
+    support: "partial",
+    toolPath: "Step response metrics",
     name: "Final Value Theorem",
     category: "algebraic",
     description: "Relates the steady-state (t->inf) value of a signal to its Laplace transform.",
@@ -274,6 +304,8 @@ export const IDENTITIES: Identity[] = [
   },
   {
     id: "initial_value",
+    support: "reference",
+    toolPath: "Library reference",
     name: "Initial Value Theorem",
     category: "algebraic",
     description: "Relates the initial (t=0+) value of a signal to its Laplace transform.",
@@ -291,6 +323,319 @@ export const IDENTITIES: Identity[] = [
     ],
     reference: "Ogata §2-7; Franklin §3.1",
   },
+  {
+    id: "proportional_control",
+    support: "partial",
+    toolPath: "Gain block preset and gain tuner",
+    name: "Proportional Control (P)",
+    category: "controllers",
+    description: "Feeds the error forward through a constant gain to shift the root locus operating point.",
+    formula: "C(s) = Kp,  U(s) = Kp*E(s)",
+    equivalent: "G_ol,c(s) = Kp*G(s)",
+    derivation: [
+      "Controller output is proportional to error: u(t) = Kp*e(t).",
+      "Taking the Laplace transform gives U(s) = Kp*E(s).",
+      "In cascade with the plant, the loop gain becomes Kp*G(s)H(s).",
+      "Changing Kp moves closed-loop poles along the existing root locus.",
+    ],
+    notes: [
+      "Higher gain usually reduces steady-state error but can increase overshoot.",
+      "P control does not add poles or zeros, so it cannot reshape the root locus.",
+      "Use gain adjustment when the desired pole location already lies on the locus.",
+    ],
+    reference: "ME 484 Ch.3 Root Locus p.19; Ch.4 Frequency Response p.41-43",
+  },
+  {
+    id: "integral_control",
+    support: "partial",
+    toolPath: "Integrator block preset",
+    name: "Integral Control (I)",
+    category: "controllers",
+    description: "Feeds the integral of the error forward, adding an open-loop pole at the origin.",
+    formula: "C(s) = Ki/s,  U(s) = (Ki/s)*E(s)",
+    equivalent: "Adds one integrator and increases system type by one",
+    derivation: [
+      "Controller output is proportional to the accumulated error.",
+      "The Laplace transform of integration contributes a factor of 1/s.",
+      "The loop gain gains a pole at the origin.",
+      "An added origin pole increases system type, improving steady-state error class.",
+    ],
+    notes: [
+      "Pure integration can drive step error to zero when it raises type sufficiently.",
+      "The extra pole changes root-locus angle and can hurt transient response.",
+      "Ideal integral compensation generally needs active implementation.",
+    ],
+    reference: "ME 484 Ch.3 Root Locus p.18-22",
+  },
+  {
+    id: "derivative_control",
+    support: "partial",
+    toolPath: "Differentiator block preset",
+    name: "Derivative Control (D)",
+    category: "controllers",
+    description: "Feeds the derivative of the error forward, adding phase lead and anticipating fast changes.",
+    formula: "C(s) = Kd*s,  U(s) = Kd*s*E(s)",
+    equivalent: "Adds a zero-like differentiating action to the forward path",
+    derivation: [
+      "Controller output is proportional to the rate of change of error.",
+      "The Laplace transform of differentiation contributes a factor of s.",
+      "Derivative action adds positive phase and can improve transient response.",
+      "In practice, pure differentiation is approximated because it amplifies high-frequency noise.",
+    ],
+    notes: [
+      "Derivative action is useful for speeding up response and adding damping.",
+      "Pure derivative control is noise-sensitive.",
+      "Lead compensation is the passive approximation used in the slides.",
+    ],
+    warning: "Pure differentiation can amplify high-frequency noise and cause unwanted actuator effort.",
+    reference: "ME 484 Ch.3 Root Locus p.31-34, p.44-45",
+  },
+  {
+    id: "pi_controller",
+    support: "partial",
+    toolPath: "PID block preset and gain tuner",
+    name: "Proportional-Integral Controller (PI)",
+    category: "controllers",
+    description: "Ideal integral compensator that combines proportional error and integrated error.",
+    formula: "C(s) = Kp + Ki/s = Kp*(s + zc)/s",
+    equivalent: "Adds a pole at s=0 and a nearby zero at s=-zc",
+    derivation: [
+      "Start with proportional plus integral action: C(s) = Kp + Ki/s.",
+      "Write over a common denominator: C(s) = (Kp*s + Ki)/s.",
+      "Factor the numerator: C(s) = Kp*(s + Ki/Kp)/s.",
+      "The pole at the origin increases system type; the zero is placed near the origin to preserve transient response.",
+    ],
+    notes: [
+      "Used to improve steady-state error.",
+      "The zero near the origin reduces the angular disturbance at the desired dominant poles.",
+      "The slides call PI an ideal integral compensator.",
+    ],
+    reference: "ME 484 Ch.3 Root Locus p.20-24",
+  },
+  {
+    id: "pd_controller",
+    support: "partial",
+    toolPath: "PID block preset and gain tuner",
+    name: "Proportional-Derivative Controller (PD)",
+    category: "controllers",
+    description: "Ideal derivative compensator that adds a forward-path zero to reshape the root locus.",
+    formula: "C(s) = Kp + Kd*s = Kd*(s + zc)",
+    equivalent: "Adds one controller zero at s=-zc",
+    derivation: [
+      "Start with proportional plus derivative action: C(s) = Kp + Kd*s.",
+      "Factor the controller: C(s) = Kd*(s + Kp/Kd).",
+      "The added zero changes the root-locus angle condition.",
+      "Choose the zero so the compensated locus passes through the desired dominant pole location.",
+    ],
+    notes: [
+      "Used to improve transient response when gain alone cannot hit the desired pole.",
+      "Can reduce settling time while preserving percent overshoot when damping ratio is maintained.",
+      "Lead compensation approximates PD without pure differentiation.",
+    ],
+    warning: "PD action improves transients but inherits the noise sensitivity of differentiation.",
+    reference: "ME 484 Ch.3 Root Locus p.31-44",
+  },
+  {
+    id: "pid_controller",
+    support: "partial",
+    toolPath: "PID block preset and gain tuner",
+    name: "PID Controller",
+    category: "controllers",
+    description: "Combines proportional, integral, and derivative action to target transient and steady-state behavior together.",
+    formula: "C(s) = Kp + Ki/s + Kd*s = (Kd*s^2 + Kp*s + Ki)/s",
+    equivalent: "Adds one pole at the origin and up to two controller zeros",
+    derivation: [
+      "Place all terms over a common denominator s.",
+      "C(s) = (Kd*s^2 + Kp*s + Ki)/s.",
+      "The origin pole contributes integral action for steady-state error.",
+      "The numerator zeros contribute phase shaping for transient response.",
+    ],
+    notes: [
+      "PI behavior improves steady-state error.",
+      "PD behavior improves transient response.",
+      "PID is useful when both objectives matter, but gains should be checked against stability margins.",
+    ],
+    reference: "ME 484 Ch.3 Root Locus p.19-20, p.31-34; Ch.4 Frequency Response p.55",
+  },
+  {
+    id: "lag_compensator",
+    support: "partial",
+    toolPath: "Lag block preset; Bode and static error checks",
+    name: "Lag Compensator",
+    category: "controllers",
+    description: "Passive compensator used mainly to improve steady-state error with minimal transient change.",
+    formula: "G_c(s) = Kc*(s + zc)/(s + pc),  |zc| > |pc| and both near origin",
+    equivalent: "Static error improvement factor approximately zc/pc",
+    derivation: [
+      "Place a compensator pole and zero close to each other near the origin.",
+      "Because they are close, their angle contribution at dominant poles is small.",
+      "The low-frequency gain increases relative to high-frequency gain.",
+      "The static error constant improves approximately by the zero-to-pole magnitude ratio.",
+    ],
+    notes: [
+      "Lag does not usually increase system type.",
+      "It improves steady-state error while trying to preserve transient response.",
+      "In Bode design, lag reduces high-frequency magnitude and adds negative phase.",
+    ],
+    reference: "ME 484 Ch.3 Root Locus p.25-30; Ch.4 Frequency Response p.46-49",
+  },
+  {
+    id: "lead_compensator",
+    support: "partial",
+    toolPath: "Lead block preset; root locus and Bode plots",
+    name: "Lead Compensator",
+    category: "controllers",
+    description: "Passive compensator used mainly to improve transient response by adding positive phase.",
+    formula: "G_c(s) = Kc*(s + zc)/(s + pc),  |pc| > |zc|",
+    equivalent: "Adds positive phase; increases phase margin and bandwidth",
+    derivation: [
+      "Place the compensator zero closer to the imaginary axis than the pole.",
+      "At the design point, the zero contributes more positive angle than the pole removes.",
+      "This positive phase reshapes the root locus or raises the Bode phase curve.",
+      "The compensated system can reach faster dominant poles or a larger phase margin.",
+    ],
+    notes: [
+      "Used to reduce overshoot by increasing phase margin.",
+      "Used to speed response by increasing bandwidth or moving dominant poles left.",
+      "Lead is the passive approximation to ideal derivative compensation.",
+    ],
+    reference: "ME 484 Ch.3 Root Locus p.45; Ch.4 Frequency Response p.50-54",
+  },
+  {
+    id: "lead_lag_compensator",
+    support: "reference",
+    toolPath: "Compose lead and lag blocks manually",
+    name: "Lead-Lag Compensator",
+    category: "controllers",
+    description: "Combines lag compensation for steady-state error with lead compensation for transient response.",
+    formula: "G_c(s) = Kc * G_lead(s) * G_lag(s)",
+    equivalent: "Lead improves phase margin/bandwidth; lag improves low-frequency error constants",
+    derivation: [
+      "Use lag action to raise low-frequency loop gain and improve steady-state error.",
+      "Use lead action to add positive phase and improve transient response.",
+      "Cascade the two compensator factors with the plant.",
+      "Check the final design with root locus, Bode margins, and time response simulation.",
+    ],
+    notes: [
+      "Use when steady-state and transient specifications both matter.",
+      "The frequency-response slides list lead-lag as the combined objective option.",
+      "Always re-check margins after combining compensators.",
+    ],
+    reference: "ME 484 Ch.4 Frequency Response p.55",
+  },
+  {
+    id: "static_error_constants",
+    support: "live",
+    toolPath: "Course Insight panel",
+    name: "Static Error Constants",
+    category: "course_checks",
+    description: "Unity-feedback steady-state error constants from the loop gain L(s).",
+    formula: "L(s) = G(s)H(s),  E(s) = R(s)/(1 + L(s))",
+    equivalent: "Kp = lim L(s),  Kv = lim sL(s),  Ka = lim s^2L(s)",
+    derivation: [
+      "For unity negative feedback, E(s) = R(s)/(1 + L(s)).",
+      "Step input: R(s) = 1/s, so e_ss = 1/(1 + Kp).",
+      "Ramp input: R(s) = 1/s^2, so e_ss = 1/Kv.",
+      "Parabolic input: R(s) = 1/s^3, so e_ss = 1/Ka.",
+    ],
+    notes: [
+      "System type is the number of uncancelled open-loop poles at the origin.",
+      "Type 0: finite step error and infinite ramp error.",
+      "Type 1: zero step error and finite ramp error.",
+      "Type 2: zero step and ramp error, finite parabolic error.",
+    ],
+    reference: "ME 484 Ch.2 Time Response; error constants handout",
+  },
+  {
+    id: "routh_hurwitz_course",
+    support: "live",
+    toolPath: "Course Insight panel",
+    name: "Routh-Hurwitz Stability Check",
+    category: "course_checks",
+    description: "Determines right-half-plane pole count from the characteristic polynomial without solving roots.",
+    formula: "Characteristic equation: a_n s^n + ... + a_1 s + a_0 = 0",
+    equivalent: "Number of sign changes in first Routh column = number of RHP poles",
+    derivation: [
+      "Place alternating polynomial coefficients in the first two rows.",
+      "Compute each lower row from the two rows above it.",
+      "Read the signs in the first column.",
+      "Each sign change indicates one right-half-plane pole.",
+    ],
+    notes: [
+      "No first-column sign changes predicts left-half-plane poles.",
+      "A zero first-column entry needs the epsilon method.",
+      "A row of zeros means a special case; use the auxiliary polynomial.",
+      "Stability is the gate before transient or steady-state specs matter.",
+    ],
+    reference: "Routh Hurwitz.pdf",
+  },
+  {
+    id: "second_order_measures",
+    support: "partial",
+    toolPath: "Analysis plots and step metrics",
+    name: "Second-Order Time Response Measures",
+    category: "course_checks",
+    description: "Links dominant pole geometry to overshoot, rise time, peak time, and settling time.",
+    formula: "s^2 + 2*zeta*omega_n*s + omega_n^2",
+    equivalent: "Mp = exp(-zeta*pi/sqrt(1-zeta^2))*100%,  Ts ~= 4/(zeta*omega_n) for 2%",
+    derivation: [
+      "Compare the denominator with the standard second-order form.",
+      "omega_d = omega_n*sqrt(1 - zeta^2).",
+      "Peak time: Tp = pi/omega_d.",
+      "Settling time is governed by the exponential envelope exp(-zeta*omega_n*t).",
+    ],
+    notes: [
+      "Small zeta gives faster oscillation but more overshoot.",
+      "Larger omega_n generally moves the response faster.",
+      "Dominant second-order approximations are useful for higher-order systems when extra poles are far away.",
+    ],
+    reference: "ME 484 Ch.2 Time Response",
+  },
+  {
+    id: "root_locus_design_rules",
+    support: "partial",
+    toolPath: "Root locus plot",
+    name: "Root Locus Design Rules",
+    category: "course_checks",
+    description: "Uses open-loop poles and zeros to design gain and compensators from desired closed-loop pole locations.",
+    formula: "1 + K*G(s)H(s) = 0",
+    equivalent: "Angle criterion: angle L(s) = (2k+1)180 deg; magnitude criterion: K = 1/|L(s)|",
+    derivation: [
+      "Start from the closed-loop characteristic equation.",
+      "Separate the gain K from the remaining loop transfer function.",
+      "Candidate closed-loop poles must satisfy the angle criterion.",
+      "Once the point is on the locus, use the magnitude criterion to find K.",
+    ],
+    notes: [
+      "Adding a zero tends to pull the locus toward that zero.",
+      "Lead/PD compensation improves transient response by adding phase near the desired poles.",
+      "Lag/PI compensation improves steady-state error with smaller movement of dominant poles.",
+    ],
+    reference: "ME 484 Ch.3 Design via Root Locus",
+  },
+  {
+    id: "frequency_response_design_rules",
+    support: "partial",
+    toolPath: "Bode, Nyquist, Nichols plots",
+    name: "Frequency Response Design Rules",
+    category: "course_checks",
+    description: "Uses Bode, Nyquist, and Nichols views to reason about margins, bandwidth, and lead/lag compensation.",
+    formula: "G(jw): magnitude in dB = 20log10|G(jw)|, phase = angle G(jw)",
+    equivalent: "GM measured at phase crossover; PM measured at gain crossover",
+    derivation: [
+      "Evaluate the loop gain at s = jw.",
+      "Use the Bode magnitude plot to find gain crossover where |G(jw)| = 1.",
+      "Use the Bode phase plot to find phase margin at that frequency.",
+      "Use phase crossover near -180 deg to read gain margin.",
+    ],
+    notes: [
+      "Positive phase margin is associated with better damping.",
+      "Higher bandwidth generally means faster response.",
+      "Lead compensation adds phase and improves transient response.",
+      "Lag compensation raises low-frequency gain to improve error constants.",
+    ],
+    reference: "ME 484 Ch.4 Design via Frequency Response",
+  },
 ];
 
 export const CATEGORY_META: Record<IdentityCategory, { label: string; color: string }> = {
@@ -300,6 +645,8 @@ export const CATEGORY_META: Record<IdentityCategory, { label: string; color: str
   algebraic: { label: "Algebraic", color: "success" },
   moving: { label: "Block Moving", color: "info" },
   signal_flow: { label: "Signal Flow", color: "info" },
+  controllers: { label: "Controllers", color: "success" },
+  course_checks: { label: "Course Checks", color: "warning" },
 };
 
 export function getIdentitiesByCategory(category: IdentityCategory): Identity[] {

@@ -21,6 +21,7 @@ const PARAM_DEFS: Record<string, { min: number; max: number; step: number; defau
 };
 
 const PID_PARAMS = ["Kp", "Ki", "Kd"] as const;
+type PIDParam = (typeof PID_PARAMS)[number];
 
 /** PID presets: [label, Kp, Ki, Kd] */
 const PID_PRESETS: [string, number, number, number][] = [
@@ -33,6 +34,10 @@ const PID_PRESETS: [string, number, number, number][] = [
 
 const SYMBOL_RE = /\b([A-Za-z_][A-Za-z0-9_]*)\b/g;
 const SKIP = new Set(["s", "e", "j"]);
+
+function isPIDParam(param: string): param is PIDParam {
+  return PID_PARAMS.some(pidParam => pidParam === param);
+}
 
 function extractParams(diagram: DiagramState): string[] {
   const found = new Set<string>();
@@ -179,8 +184,8 @@ export function GainTuner({ diagram, onAnalyze }: GainTunerProps) {
       } else {
         onAnalyze(result.result, "");
       }
-    } catch (e: any) {
-      onAnalyze(null, e.message || "Gain tuning analysis failed");
+    } catch (e: unknown) {
+      onAnalyze(null, e instanceof Error ? e.message : "Gain tuning analysis failed");
     }
   }, [diagram, onAnalyze]);
 
@@ -214,7 +219,7 @@ export function GainTuner({ diagram, onAnalyze }: GainTunerProps) {
 
   // Separate PID params from "other" params for display ordering
   const pidParamList = pidMode ? PID_PARAMS.filter(p => params.includes(p)) : [];
-  const otherParams = params.filter(p => !PID_PARAMS.includes(p as any));
+  const otherParams = params.filter(p => !isPIDParam(p));
 
   return (
     <div className="absolute top-12 right-2 z-30 w-56">

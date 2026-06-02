@@ -19,6 +19,21 @@ export function IdentityCard({ identity, isExpanded, onToggle }: Props) {
     info: "bg-info/10 text-info border border-info/30",
   }[catMeta.color] ?? "badge-series";
 
+  const supportMeta = {
+    live: {
+      label: "LIVE TOOL",
+      className: "bg-success/10 text-success border border-success/30",
+    },
+    partial: {
+      label: "PARTIAL",
+      className: "bg-warning/10 text-warning border border-warning/30",
+    },
+    reference: {
+      label: "REFERENCE",
+      className: "bg-muted text-muted-foreground border border-border",
+    },
+  }[identity.support];
+
   return (
     <div
       className={cn(
@@ -34,6 +49,9 @@ export function IdentityCard({ identity, isExpanded, onToggle }: Props) {
             <span className={cn("text-[10px] font-mono px-1.5 py-0.5 rounded font-medium", badgeClass)}>
               {catMeta.label}
             </span>
+            <span className={cn("text-[10px] font-mono px-1.5 py-0.5 rounded font-medium", supportMeta.className)}>
+              {supportMeta.label}
+            </span>
             {identity.warning && (
               <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-destructive/10 text-destructive border border-destructive/30">
                 ⚠️ WARNING
@@ -42,6 +60,11 @@ export function IdentityCard({ identity, isExpanded, onToggle }: Props) {
           </div>
           <h3 className="text-sm font-semibold text-foreground leading-snug">{identity.name}</h3>
           <p className="text-xs text-muted-foreground mt-0.5 leading-snug">{identity.description}</p>
+          {identity.toolPath && (
+            <p className="text-[10px] text-muted-foreground/80 mt-1 font-mono">
+              Tool: {identity.toolPath}
+            </p>
+          )}
         </div>
         <div className="text-muted-foreground text-xs mt-0.5 flex-shrink-0">
           {isExpanded ? "▲" : "▼"}

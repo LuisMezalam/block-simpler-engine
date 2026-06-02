@@ -14,7 +14,7 @@
  */
 
 import { solve, SolverResult, ConnectionType } from "./solver";
-import { parsePoly, mulAll, format as fmtPoly, simplifyTF, TypedTF, mul, add, sub } from "./polynomial";
+import { parsePoly, mulAll, format as fmtPoly, simplifyTF, TypedTF, mul, add, sub, scale } from "./polynomial";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -114,6 +114,7 @@ function detectFeedbackLoop(state: DiagramState): FeedbackLoop {
           fbVisited.add(current.id);
           if (current.type === "block") feedbackPath.push(current);
           if (current.type === "summing") {
+            if (current.x >= pickoff.x) break;
             // Found feedback loop — gather forward blocks between this summing junction and the pickoff
             const forwardBlocks = getForwardPathBlocks(state, current.id, pickoff.id);
 
@@ -362,10 +363,16 @@ export function analyzeDiagram(state: DiagramState, depth: number = 0): Analysis
 
     // Check for parallel
     if (detectParallel(state)) {
-      const result = solve("parallel", blocks.map(b => ({
-        id: b.id, label: b.label,
-        numStr: b.tf!.num, denStr: b.tf!.den,
-      })));
+      const result = solve("parallel", blocks.map(b => {
+        const edgeToSum = edges.find(e => e.from === b.id && nodes.find(n => n.id === e.to)?.type === "summing");
+        const sumNode = edgeToSum ? nodes.find(n => n.id === edgeToSum.to) : undefined;
+        const sign = sumNode?.signs?.[edgeToSum?.id ?? ""] ?? "+";
+        const numStr = sign === "-" ? fmtPoly(scale(parsePoly(b.tf!.num), -1)) : b.tf!.num;
+        return {
+          id: b.id, label: sign === "-" ? `-${b.label}` : b.label,
+          numStr, denStr: b.tf!.den,
+        };
+      }));
       return { topology: "parallel", result };
     }
 
@@ -387,8 +394,8 @@ export function analyzeDiagram(state: DiagramState, depth: number = 0): Analysis
       numStr: b.tf!.num, denStr: b.tf!.den,
     })));
     return { topology: "series", result };
-  } catch (e: any) {
-    return { topology: "unknown", error: e.message || "Analysis failed." };
+  } catch (e: unknown) {
+    return { topology: "unknown", error: e instanceof Error ? e.message : "Analysis failed." };
   }
 }
 

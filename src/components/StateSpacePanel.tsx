@@ -246,8 +246,8 @@ export function StateSpacePanel() {
       setErrors([]);
       const res = stateSpaceToTF(sys);
       setResult(res);
-    } catch (e: any) {
-      setErrors([e.message || "Conversion failed"]);
+    } catch (e: unknown) {
+      setErrors([e instanceof Error ? e.message : "Conversion failed"]);
       setResult(null);
     }
   }, [order, aData, bData, cData, dData]);

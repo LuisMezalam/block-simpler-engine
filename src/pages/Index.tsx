@@ -1,30 +1,212 @@
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { solve, SolverResult, ConnectionType, stabilityLabel } from "@/lib/solver";
 import { computeMargins, StabilityMargins } from "@/lib/margins";
 import { BlockDiagram } from "@/components/BlockDiagram";
 import { DiagramEditor } from "@/components/DiagramEditor";
 import { SanityLibrary } from "@/components/SanityLibrary";
+import { RoboticsResourceHub } from "@/components/RoboticsResourceHub";
 import { StateSpacePanel } from "@/components/StateSpacePanel";
 import { AnalysisPlots } from "@/components/AnalysisPlots";
+import { CourseInsightPanel } from "@/components/CourseInsightPanel";
+import {
+  AWESOME_MATLAB_ROBOTICS_LICENSE_URL,
+  AWESOME_MATLAB_ROBOTICS_URL,
+  ROBOTICS_RESOURCES,
+} from "@/lib/roboticsResources";
 import { cn } from "@/lib/utils";
+import {
+  Bot,
+  BookOpen,
+  Calculator,
+  CheckCircle2,
+  Download,
+  ExternalLink,
+  FlaskConical,
+  HelpCircle,
+  Library,
+  Network,
+  PlayCircle,
+  Share2,
+  Sigma,
+  Upload,
+} from "lucide-react";
 
 type ConnectionMode = ConnectionType;
+type AppTab = "builder" | "statespace" | "library" | "robotics";
+type Preset = {
+  label: string;
+  category?: string;
+  goal?: string;
+  connection: ConnectionMode;
+  blocks: BlockState[];
+  feedbackBlock: BlockState;
+};
 
-const CONNECTION_OPTIONS: { value: ConnectionMode; label: string; desc: string; icon: string }[] = [
-  { value: "series",           label: "Series (Cascade)",  desc: "G_eq = G₁·G₂·...·Gₙ", icon: "→" },
-  { value: "parallel",         label: "Parallel",          desc: "G_eq = G₁ + G₂ + ...", icon: "⊕" },
-  { value: "feedback_negative",label: "Negative Feedback", desc: "G_eq = G/(1+GH)",        icon: "↩" },
-  { value: "unity_feedback",   label: "Unity Feedback",    desc: "G_eq = G/(1+G)",         icon: "↺" },
-  { value: "feedback_positive",label: "Positive Feedback", desc: "G_eq = G/(1−GH)",        icon: "↑" },
+const CONNECTION_OPTIONS: {
+  value: ConnectionMode;
+  label: string;
+  desc: string;
+  icon: string;
+  useCase: string;
+  inputs: string;
+  next: string;
+}[] = [
+  {
+    value: "series",
+    label: "Series (Cascade)",
+    desc: "G_eq = G1 * G2 * ... * Gn",
+    icon: "->",
+    useCase: "Blocks happen one after another in the forward path.",
+    inputs: "Two or more G blocks",
+    next: "Check pole and zero growth after multiplication.",
+  },
+  {
+    value: "parallel",
+    label: "Parallel",
+    desc: "G_eq = G1 + G2 + ...",
+    icon: "+",
+    useCase: "Branches share an input and recombine at a summing junction.",
+    inputs: "Two or more branch blocks",
+    next: "Watch the new numerator zeros after cross-multiplication.",
+  },
+  {
+    value: "feedback_negative",
+    label: "Negative Feedback",
+    desc: "G_eq = G / (1 + GH)",
+    icon: "-fb",
+    useCase: "Output is measured through H(s) and subtracted from the reference.",
+    inputs: "Forward G and feedback H",
+    next: "Use Routh and static error checks after solving.",
+  },
+  {
+    value: "unity_feedback",
+    label: "Unity Feedback",
+    desc: "G_eq = G / (1 + G)",
+    icon: "1fb",
+    useCase: "Standard course loop where H(s) = 1.",
+    inputs: "One forward G block",
+    next: "Best starting point for time-response and error constants.",
+  },
+  {
+    value: "feedback_positive",
+    label: "Positive Feedback",
+    desc: "G_eq = G / (1 - GH)",
+    icon: "+fb",
+    useCase: "Fed-back signal is added, often creating instability.",
+    inputs: "Forward G and feedback H",
+    next: "Verify stability immediately with Routh-Hurwitz.",
+  },
 ];
 
 type BlockState = { id: string; label: string; num: string; den: string };
+
+type SavedProjectV1 = {
+  version: 1;
+  savedAt: string;
+  app: "block-diagram-simplifier";
+  connectionType: ConnectionMode;
+  blocks: BlockState[];
+  feedbackBlock: BlockState;
+};
+
+const PROJECT_QUERY_PARAM = "project";
 
 const DEFAULT_BLOCKS: BlockState[] = [
   { id: "g1", label: "G₁", num: "1", den: "s + 1" },
   { id: "g2", label: "G₂", num: "2", den: "s + 2" },
 ];
 const DEFAULT_FEEDBACK: BlockState = { id: "h1", label: "H", num: "1", den: "1" };
+
+function isConnectionMode(value: unknown): value is ConnectionMode {
+  return typeof value === "string" && CONNECTION_OPTIONS.some((option) => option.value === value);
+}
+
+function isBlockState(value: unknown): value is BlockState {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<BlockState>;
+  return (
+    typeof candidate.id === "string" &&
+    typeof candidate.label === "string" &&
+    typeof candidate.num === "string" &&
+    typeof candidate.den === "string" &&
+    candidate.id.trim().length > 0 &&
+    candidate.label.trim().length > 0 &&
+    candidate.num.trim().length > 0 &&
+    candidate.den.trim().length > 0
+  );
+}
+
+function validateProjectPayload(payload: unknown): SavedProjectV1 {
+  if (!payload || typeof payload !== "object") {
+    throw new Error("Project file is not valid JSON data.");
+  }
+
+  const project = payload as Partial<SavedProjectV1>;
+  if (project.version !== 1 || project.app !== "block-diagram-simplifier") {
+    throw new Error("Project file version is not supported.");
+  }
+  if (!isConnectionMode(project.connectionType)) {
+    throw new Error("Project file has an invalid connection type.");
+  }
+  if (!Array.isArray(project.blocks) || project.blocks.length === 0 || project.blocks.some((block) => !isBlockState(block))) {
+    throw new Error("Project file has invalid transfer-function blocks.");
+  }
+  if (!isBlockState(project.feedbackBlock)) {
+    throw new Error("Project file has an invalid feedback block.");
+  }
+
+  const minimumBlocks = project.connectionType === "series" || project.connectionType === "parallel" ? 2 : 1;
+  if (project.blocks.length < minimumBlocks) {
+    throw new Error(`${project.connectionType} projects need at least ${minimumBlocks} block(s).`);
+  }
+
+  return {
+    version: 1,
+    savedAt: typeof project.savedAt === "string" ? project.savedAt : new Date().toISOString(),
+    app: "block-diagram-simplifier",
+    connectionType: project.connectionType,
+    blocks: project.blocks.slice(0, 8).map((block) => ({ ...block })),
+    feedbackBlock: { ...project.feedbackBlock },
+  };
+}
+
+function encodeProjectSnapshot(snapshot: SavedProjectV1): string {
+  const bytes = new TextEncoder().encode(JSON.stringify(snapshot));
+  let binary = "";
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function decodeProjectSnapshot(encoded: string): SavedProjectV1 {
+  const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(encoded.length / 4) * 4, "=");
+  const binary = atob(base64);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return validateProjectPayload(JSON.parse(new TextDecoder().decode(bytes)));
+}
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Some embedded browsers deny clipboard writes unless the page is focused.
+    }
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+  return copied;
+}
 
 // ─── Typed block input component ─────────────────────────────────────────────
 function TFInput({
@@ -75,6 +257,64 @@ function TFInput({
   );
 }
 
+function WorkflowGuide({ activeTab }: { activeTab: AppTab }) {
+  const steps = activeTab === "builder"
+    ? [
+        { icon: Network, label: "Pick topology", detail: "Choose series, parallel, or feedback." },
+        { icon: Calculator, label: "Enter G(s)", detail: "Use numeric polynomial terms in s." },
+        { icon: PlayCircle, label: "Calculate", detail: "Get G_eq, course checks, and plots." },
+      ]
+    : activeTab === "statespace"
+      ? [
+          { icon: Sigma, label: "Enter A B C D", detail: "Use matrices from your model." },
+          { icon: Calculator, label: "Convert", detail: "Generate the SISO transfer function." },
+          { icon: FlaskConical, label: "Analyze", detail: "Bring it back into the block tools." },
+        ]
+      : activeTab === "library"
+        ? [
+          { icon: Library, label: "Search", detail: "Find identities by topic or coverage." },
+          { icon: CheckCircle2, label: "Check status", detail: "Live, partial, or reference." },
+          { icon: BookOpen, label: "Study", detail: "Read formula, derivation, and notes." },
+        ]
+        : [
+          { icon: Bot, label: "Find tooling", detail: "Browse MATLAB robotics resources." },
+          { icon: CheckCircle2, label: "Check needs", detail: "Review licenses and toolbox requirements." },
+          { icon: ExternalLink, label: "Open source", detail: "Jump to GitHub, docs, or File Exchange." },
+        ];
+
+  return (
+    <div className="grid gap-2 sm:grid-cols-3">
+      {steps.map(({ icon: Icon, label, detail }) => (
+        <div key={label} className="rounded border border-border bg-secondary/25 px-3 py-2">
+          <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+            <Icon className="h-3.5 w-3.5 text-primary" />
+            {label}
+          </div>
+          <p className="mt-1 text-[10px] leading-snug text-muted-foreground">{detail}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ModeCoach({ option }: { option: (typeof CONNECTION_OPTIONS)[number] }) {
+  return (
+    <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-3">
+      <div className="mb-2 flex items-center gap-2">
+        <HelpCircle className="h-3.5 w-3.5 text-primary" />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-primary">
+          Mode Coach
+        </span>
+      </div>
+      <div className="space-y-2 text-[11px] leading-snug text-muted-foreground">
+        <p><span className="font-semibold text-foreground">Use when:</span> {option.useCase}</p>
+        <p><span className="font-semibold text-foreground">Needs:</span> {option.inputs}</p>
+        <p><span className="font-semibold text-foreground">Next check:</span> {option.next}</p>
+      </div>
+    </div>
+  );
+}
+
 // ─── Result panel ─────────────────────────────────────────────────────────────
 function ResultPanel({ result, error }: { result: SolverResult | null; error: string }) {
   const [showDerivation, setShowDerivation] = useState(false);
@@ -100,15 +340,23 @@ function ResultPanel({ result, error }: { result: SolverResult | null; error: st
 
   if (!result) {
     return (
-      <div className="panel-section p-6 text-center">
-        <div className="text-4xl mb-3 opacity-30">⚡</div>
-        <p className="text-sm text-muted-foreground">
-          Configure your block diagram and click{" "}
-          <strong className="text-primary">Calculate G_eq(s)</strong> to see the exact typed result.
-        </p>
-        <p className="text-[11px] text-muted-foreground/60 mt-2 font-mono">
-          Powered by exact polynomial arithmetic · GCD simplification · Stability analysis
-        </p>
+      <div className="panel-section p-6">
+        <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-md border border-primary/25 bg-primary/10">
+          <Calculator className="h-4 w-4 text-primary" />
+        </div>
+        <div className="text-center">
+          <p className="text-sm font-semibold text-foreground">Ready for a transfer function.</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Pick a topology, load an example if you want a starting point, then calculate G_eq(s).
+          </p>
+        </div>
+        <div className="mt-4 grid gap-2 sm:grid-cols-3">
+          {["Exact simplification", "Stability verdict", "Course checks"].map((label) => (
+            <div key={label} className="rounded border border-border bg-secondary/30 px-3 py-2 text-center text-[10px] text-muted-foreground">
+              {label}
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -257,7 +505,7 @@ function ResultPanel({ result, error }: { result: SolverResult | null; error: st
 }
 
 // ─── Numeric presets (use parseable polynomial strings) ───────────────────────
-const PRESETS = [
+const PRESETS: Preset[] = [
   {
     label: "First-Order Unity Feedback",
     connection: "unity_feedback" as ConnectionMode,
@@ -300,6 +548,59 @@ const PRESETS = [
     ],
     feedbackBlock: DEFAULT_FEEDBACK,
   },
+  {
+    label: "PD Controller Identity",
+    category: "Controller",
+    goal: "Combine derivative and proportional action before checking noise tradeoffs.",
+    connection: "parallel",
+    blocks: [
+      { id: "g1", label: "P", num: "3", den: "1" },
+      { id: "g2", label: "D", num: "0.4s", den: "1" },
+    ],
+    feedbackBlock: DEFAULT_FEEDBACK,
+  },
+  {
+    label: "PID Controller Identity",
+    category: "Controller",
+    goal: "Build C(s) from P, I, and D terms for analysis in the plot studio.",
+    connection: "parallel",
+    blocks: [
+      { id: "g1", label: "P", num: "2", den: "1" },
+      { id: "g2", label: "I", num: "1", den: "s" },
+      { id: "g3", label: "D", num: "0.25s", den: "1" },
+    ],
+    feedbackBlock: DEFAULT_FEEDBACK,
+  },
+  {
+    label: "Lead Compensator Starter",
+    category: "Controller",
+    goal: "Add phase with a controller zero closer to the origin than its pole.",
+    connection: "series",
+    blocks: [
+      { id: "g1", label: "Clead", num: "s + 1", den: "s + 5" },
+      { id: "g2", label: "G", num: "10", den: "s^2 + 3s + 2" },
+    ],
+    feedbackBlock: DEFAULT_FEEDBACK,
+  },
+  {
+    label: "Lag Compensator Starter",
+    category: "Controller",
+    goal: "Raise low-frequency loop gain while keeping dominant dynamics similar.",
+    connection: "series",
+    blocks: [
+      { id: "g1", label: "Clag", num: "s + 2", den: "s + 0.2" },
+      { id: "g2", label: "G", num: "4", den: "s^2 + 2.4s + 4" },
+    ],
+    feedbackBlock: DEFAULT_FEEDBACK,
+  },
+  {
+    label: "Positive Feedback Warning",
+    category: "Stability",
+    goal: "See why positive feedback needs immediate stability checks.",
+    connection: "feedback_positive",
+    blocks: [{ id: "g1", label: "G", num: "4", den: "s^2 + 2s + 2" }],
+    feedbackBlock: DEFAULT_FEEDBACK,
+  },
 ];
 
 // ─── Main page ────────────────────────────────────────────────────────────────
@@ -309,11 +610,51 @@ export default function Index() {
   const [feedbackBlock, setFeedbackBlock] = useState<BlockState>(DEFAULT_FEEDBACK);
   const [result, setResult] = useState<SolverResult | null>(null);
   const [error, setError] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<"builder" | "statespace" | "library">("builder");
+  const [activeTab, setActiveTab] = useState<AppTab>("builder");
   const [showPresets, setShowPresets] = useState(false);
+  const [projectStatus, setProjectStatus] = useState<string>("");
+  const projectFileInputRef = useRef<HTMLInputElement | null>(null);
+  const sharedProjectLoadedRef = useRef(false);
 
   const needsFeedback = connectionType === "feedback_negative" || connectionType === "feedback_positive";
   const needsMultiBlock = connectionType === "series" || connectionType === "parallel";
+  const selectedConnection = CONNECTION_OPTIONS.find((option) => option.value === connectionType) ?? CONNECTION_OPTIONS[0];
+  const roboticsGithubCount = ROBOTICS_RESOURCES.filter((resource) => resource.access === "github").length;
+  const roboticsSourceCount = new Set(ROBOTICS_RESOURCES.map((resource) => resource.sourceSection)).size;
+
+  const createProjectSnapshot = useCallback((): SavedProjectV1 => ({
+    version: 1,
+    savedAt: new Date().toISOString(),
+    app: "block-diagram-simplifier",
+    connectionType,
+    blocks: blocks.map((block) => ({ ...block })),
+    feedbackBlock: { ...feedbackBlock },
+  }), [blocks, connectionType, feedbackBlock]);
+
+  const applyProjectSnapshot = useCallback((project: SavedProjectV1, source: string) => {
+    setConnectionType(project.connectionType);
+    setBlocks(project.blocks.map((block) => ({ ...block })));
+    setFeedbackBlock({ ...project.feedbackBlock });
+    setResult(null);
+    setError("");
+    setShowPresets(false);
+    setActiveTab("builder");
+    setProjectStatus(`${source} loaded.`);
+  }, []);
+
+  useEffect(() => {
+    if (sharedProjectLoadedRef.current) return;
+    sharedProjectLoadedRef.current = true;
+
+    const encodedProject = new URLSearchParams(window.location.search).get(PROJECT_QUERY_PARAM);
+    if (!encodedProject) return;
+
+    try {
+      applyProjectSnapshot(decodeProjectSnapshot(encodedProject), "Shared project");
+    } catch (e: unknown) {
+      setProjectStatus(e instanceof Error ? e.message : "Shared project could not be loaded.");
+    }
+  }, [applyProjectSnapshot]);
 
   const handleCalculate = useCallback(() => {
     try {
@@ -338,11 +679,49 @@ export default function Index() {
           : undefined
       );
       setResult(res);
-    } catch (e: any) {
-      setError(e.message || "Calculation error");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Calculation error");
       setResult(null);
     }
   }, [connectionType, blocks, feedbackBlock, needsFeedback]);
+
+  const handleSaveProject = useCallback(() => {
+    const snapshot = createProjectSnapshot();
+    const blob = new Blob([JSON.stringify(snapshot, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `block-simplifier-project-${snapshot.savedAt.slice(0, 10)}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setProjectStatus("Project JSON saved.");
+  }, [createProjectSnapshot]);
+
+  const handleLoadProjectFile = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      applyProjectSnapshot(validateProjectPayload(JSON.parse(text)), file.name);
+    } catch (e: unknown) {
+      setProjectStatus(e instanceof Error ? e.message : "Project file could not be loaded.");
+    } finally {
+      event.target.value = "";
+    }
+  }, [applyProjectSnapshot]);
+
+  const handleCopyShareLink = useCallback(async () => {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set(PROJECT_QUERY_PARAM, encodeProjectSnapshot(createProjectSnapshot()));
+      window.history.replaceState(null, "", url);
+      const copied = await copyTextToClipboard(url.toString());
+      setProjectStatus(copied ? "Share link copied." : "Share link ready in the address bar.");
+    } catch (e: unknown) {
+      setProjectStatus(e instanceof Error ? e.message : "Share link could not be created.");
+    }
+  }, [createProjectSnapshot]);
 
   const addBlock = () => {
     const n = blocks.length + 1;
@@ -358,13 +737,14 @@ export default function Index() {
     setBlocks(blocks.map(b => b.id === id ? { ...b, num, den } : b));
   };
 
-  const applyPreset = (preset: typeof PRESETS[0]) => {
+  const applyPreset = (preset: Preset) => {
     setConnectionType(preset.connection);
-    setBlocks(preset.blocks);
-    setFeedbackBlock(preset.feedbackBlock);
+    setBlocks(preset.blocks.map((block) => ({ ...block })));
+    setFeedbackBlock({ ...preset.feedbackBlock });
     setResult(null);
     setError("");
     setShowPresets(false);
+    setProjectStatus(`${preset.label} loaded.`);
   };
 
   // Convert BlockState to BlockConfig for BlockDiagram
@@ -374,39 +754,41 @@ export default function Index() {
     ? { id: feedbackBlock.id, label: feedbackBlock.label, tf: { num: feedbackBlock.num, den: feedbackBlock.den } }
     : undefined;
 
-  const TAB_LABELS: { id: "builder" | "statespace" | "library"; icon: string; label: string }[] = [
-    { id: "builder",    icon: "⚙",  label: "Builder" },
-    { id: "statespace", icon: "Σ",  label: "State-Space" },
-    { id: "library",    icon: "📚", label: "Library" },
+  const TAB_LABELS: { id: AppTab; icon: typeof Calculator; label: string }[] = [
+    { id: "builder", icon: Network, label: "Builder" },
+    { id: "statespace", icon: Sigma, label: "State-Space" },
+    { id: "library", icon: Library, label: "Library" },
+    { id: "robotics", icon: Bot, label: "Robotics" },
   ];
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Top Nav */}
-      <header className="border-b border-border bg-card px-6 py-3 flex items-center justify-between flex-shrink-0">
+      <header className="border-b border-border bg-card/95 px-4 py-3 sm:px-6 flex flex-col gap-3 flex-shrink-0 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex gap-1">
-            <div className="w-2 h-2 rounded-full bg-primary" />
-            <div className="w-2 h-2 rounded-full bg-accent" />
-            <div className="w-2 h-2 rounded-full bg-warning" />
+          <div className="flex h-9 w-9 items-center justify-center rounded-md border border-primary/30 bg-primary/10">
+            <Network className="h-4 w-4 text-primary" />
           </div>
           <div>
-            <h1 className="text-sm font-bold text-foreground tracking-wide">
+            <h1 className="text-base font-bold text-foreground tracking-wide">
               Block Diagram Simplifier
             </h1>
-            <p className="text-[10px] text-muted-foreground font-mono">
-              U(s) → G(s) → C(s) · Exact Polynomial Arithmetic · State-Space Conversion
+            <p className="text-[11px] text-muted-foreground">
+              Exact polynomial arithmetic, visual reduction, and ME 484 course checks.
             </p>
           </div>
         </div>
-        <div className="hidden sm:flex items-center gap-1 text-[10px] text-muted-foreground font-mono">
-          Nise · Ogata · Franklin
+        <div className="grid grid-cols-2 gap-2 text-[10px] text-muted-foreground sm:flex sm:items-center">
+          <span className="rounded border border-border bg-secondary/35 px-2 py-1">Live solver</span>
+          <span className="rounded border border-border bg-secondary/35 px-2 py-1">Course checks</span>
+          <span className="rounded border border-border bg-secondary/35 px-2 py-1">Library coverage</span>
+          <span className="rounded border border-border bg-secondary/35 px-2 py-1">Robotics links</span>
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
         {/* Left Panel */}
-        <div className="w-80 flex-shrink-0 border-r border-border flex flex-col bg-card">
+        <div className="w-full max-h-[68vh] flex-shrink-0 border-b border-border bg-card flex flex-col lg:max-h-none lg:w-[22rem] lg:border-b-0 lg:border-r xl:w-96">
           {/* Tab switcher */}
           <div className="flex border-b border-border">
             {TAB_LABELS.map(tab => (
@@ -420,7 +802,8 @@ export default function Index() {
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
-                {tab.icon} {tab.label}
+                <tab.icon className="mx-auto mb-1 h-3.5 w-3.5" />
+                {tab.label}
               </button>
             ))}
           </div>
@@ -428,28 +811,96 @@ export default function Index() {
           {/* Builder Tab */}
           {activeTab === "builder" && (
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {/* Presets */}
-              <div>
-                <button
-                  onClick={() => setShowPresets(!showPresets)}
-                  className="w-full flex items-center justify-between text-xs font-semibold text-muted-foreground hover:text-foreground uppercase tracking-wider py-1"
-                >
-                  <span>Quick Presets</span>
-                  <span>{showPresets ? "▲" : "▼"}</span>
-                </button>
-                {showPresets && (
-                  <div className="mt-2 space-y-1">
-                    {PRESETS.map((p, i) => (
-                      <button
-                        key={i}
-                        onClick={() => applyPreset(p)}
-                        className="w-full text-left px-3 py-2 rounded bg-secondary hover:bg-secondary/80 text-xs text-foreground hover:text-primary transition-colors"
-                      >
-                        {p.label}
-                      </button>
-                    ))}
+              <WorkflowGuide activeTab={activeTab} />
+
+              {/* Project tools */}
+              <div className="rounded-lg border border-border bg-secondary/20 p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Network className="h-3.5 w-3.5 text-primary" />
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Project
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground">{blocks.length} block{blocks.length === 1 ? "" : "s"}</span>
+                </div>
+                <input
+                  ref={projectFileInputRef}
+                  type="file"
+                  accept="application/json,.json"
+                  className="hidden"
+                  onChange={handleLoadProjectFile}
+                />
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button
+                    onClick={handleSaveProject}
+                    className="flex items-center justify-center gap-1.5 rounded border border-border bg-background/35 px-2 py-2 text-[10px] font-semibold text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                    title="Save project JSON"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Save
+                  </button>
+                  <button
+                    onClick={() => projectFileInputRef.current?.click()}
+                    className="flex items-center justify-center gap-1.5 rounded border border-border bg-background/35 px-2 py-2 text-[10px] font-semibold text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                    title="Load project JSON"
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    Load
+                  </button>
+                  <button
+                    onClick={handleCopyShareLink}
+                    className="flex items-center justify-center gap-1.5 rounded border border-border bg-background/35 px-2 py-2 text-[10px] font-semibold text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                    title="Copy share link"
+                  >
+                    <Share2 className="h-3.5 w-3.5" />
+                    Share
+                  </button>
+                </div>
+                {projectStatus && (
+                  <div className="mt-2 rounded border border-primary/20 bg-primary/5 px-2 py-1.5 text-[10px] leading-snug text-muted-foreground">
+                    {projectStatus}
                   </div>
                 )}
+              </div>
+
+              {/* Presets */}
+              <div className="rounded-lg border border-border bg-secondary/20 p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <PlayCircle className="h-3.5 w-3.5 text-primary" />
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Start With An Example
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setShowPresets(!showPresets)}
+                    className="text-[10px] font-semibold text-primary hover:text-accent"
+                  >
+                    {showPresets ? "Show less" : "More"}
+                  </button>
+                </div>
+                <div className="grid gap-1.5">
+                  {(showPresets ? PRESETS : PRESETS.slice(0, 3)).map((p, i) => (
+                    <button
+                      key={i}
+                      onClick={() => applyPreset(p)}
+                      className="group w-full rounded border border-border bg-background/35 px-3 py-2 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-semibold text-foreground group-hover:text-primary">{p.label}</span>
+                        <span className="flex-shrink-0 rounded border border-border bg-secondary/35 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-muted-foreground">
+                          {p.category ?? CONNECTION_OPTIONS.find((option) => option.value === p.connection)?.label.split(" ")[0] ?? "Example"}
+                        </span>
+                      </div>
+                      {p.goal && (
+                        <div className="mt-1 text-[10px] leading-snug text-muted-foreground">
+                          {p.goal}
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Connection type */}
@@ -476,13 +927,18 @@ export default function Index() {
                           : "border-border bg-secondary/30 text-muted-foreground hover:border-border/80 hover:text-foreground"
                       )}
                     >
-                      <span className="text-base w-5 text-center flex-shrink-0">{opt.icon}</span>
+                      <span className="w-9 flex-shrink-0 rounded border border-border bg-background/40 px-1.5 py-1 text-center text-[10px] font-mono text-primary">
+                        {opt.icon}
+                      </span>
                       <div>
                         <div className="text-xs font-semibold">{opt.label}</div>
                         <div className="text-[10px] font-mono text-muted-foreground">{opt.desc}</div>
                       </div>
                     </button>
                   ))}
+                </div>
+                <div className="mt-3">
+                  <ModeCoach option={selectedConnection} />
                 </div>
               </div>
 
@@ -575,13 +1031,20 @@ export default function Index() {
               <SanityLibrary />
             </div>
           )}
+
+          {/* Robotics Tab */}
+          {activeTab === "robotics" && (
+            <div className="flex-1 overflow-hidden">
+              <RoboticsResourceHub />
+            </div>
+          )}
         </div>
 
         {/* Main canvas + result */}
         <div className="flex-1 flex flex-col overflow-y-auto">
           {/* Interactive Block Diagram Editor (builder tab) */}
           {activeTab === "builder" && (
-            <div className="panel-section m-4 mb-2 h-[500px] flex flex-col overflow-hidden flex-shrink-0">
+            <div className="panel-section m-3 mb-2 h-[420px] flex flex-col overflow-hidden flex-shrink-0 sm:m-4 sm:mb-2 lg:h-[500px]">
               <div className="px-4 py-2 border-b border-border flex items-center gap-2">
                 <div className="w-1.5 h-1.5 rounded-full bg-signal" />
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -657,8 +1120,9 @@ export default function Index() {
 
           {/* Result panel (builder only) */}
           {activeTab === "builder" && (
-            <div className="overflow-y-auto px-4 pb-4 max-h-[50vh] space-y-3">
+            <div className="overflow-y-auto px-3 pb-4 space-y-3 sm:px-4 lg:max-h-[50vh]">
               <ResultPanel result={result} error={error} />
+              {result && <CourseInsightPanel result={result} />}
               {result && <AnalysisPlots result={result} />}
             </div>
           )}
@@ -670,9 +1134,73 @@ export default function Index() {
                 <div className="text-3xl mb-3">📚</div>
                 <h3 className="text-sm font-bold text-foreground mb-2">Sanity Check Library</h3>
                 <p className="text-xs text-muted-foreground max-w-md mx-auto">
-                  Browse verified block diagram identities in the left panel. Each identity includes a formal derivation,
-                  notes on poles/zeros, and textbook references (Nise, Ogata, Franklin).
+                  Browse verified block diagram identities and ME 484 course checks in the left panel. Each card includes
+                  the formula, derivation steps, notes, and the chapter or handout it came from.
                 </p>
+              </div>
+            </div>
+          )}
+
+          {/* Robotics full-width info */}
+          {activeTab === "robotics" && (
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="panel-section p-6">
+                <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-md border border-primary/25 bg-primary/10">
+                  <Bot className="h-5 w-5 text-primary" />
+                </div>
+                <div className="text-center">
+                  <h3 className="text-sm font-bold text-foreground">Robotics Freeware and Resource Hub</h3>
+                  <p className="mx-auto mt-2 max-w-lg text-xs leading-relaxed text-muted-foreground">
+                    The left panel maps the MathWorks robotics list into searchable project links, docs, File Exchange items,
+                    and toolbox examples so the control-system tools can connect to real robotics workflows.
+                  </p>
+                </div>
+
+                <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                  <div className="rounded border border-border bg-secondary/25 px-4 py-3 text-center">
+                    <div className="text-lg font-bold text-primary">{ROBOTICS_RESOURCES.length}</div>
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Curated links</div>
+                  </div>
+                  <div className="rounded border border-border bg-secondary/25 px-4 py-3 text-center">
+                    <div className="text-lg font-bold text-primary">{roboticsGithubCount}</div>
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">GitHub entries</div>
+                  </div>
+                  <div className="rounded border border-border bg-secondary/25 px-4 py-3 text-center">
+                    <div className="text-lg font-bold text-primary">{roboticsSourceCount}</div>
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">Source sections</div>
+                  </div>
+                </div>
+
+                <div className="mt-5 grid gap-3 md:grid-cols-2">
+                  <a
+                    href={AWESOME_MATLAB_ROBOTICS_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded border border-border bg-secondary/20 px-4 py-3 transition-colors hover:border-primary/40 hover:bg-primary/5"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-xs font-semibold text-foreground">Upstream GitHub List</span>
+                      <ExternalLink className="h-3.5 w-3.5 text-primary" />
+                    </div>
+                    <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+                      Original awesome list maintained by mathworks-robotics.
+                    </p>
+                  </a>
+                  <a
+                    href={AWESOME_MATLAB_ROBOTICS_LICENSE_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded border border-border bg-secondary/20 px-4 py-3 transition-colors hover:border-primary/40 hover:bg-primary/5"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-xs font-semibold text-foreground">License Boundary</span>
+                      <ExternalLink className="h-3.5 w-3.5 text-primary" />
+                    </div>
+                    <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+                      The app links outward and preserves source attribution instead of bundling third-party code.
+                    </p>
+                  </a>
+                </div>
               </div>
             </div>
           )}

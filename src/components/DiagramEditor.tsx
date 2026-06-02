@@ -7,6 +7,7 @@ import {
 import { SolverResult } from "@/lib/solver";
 import { cn } from "@/lib/utils";
 import { GainTuner } from "./GainTuner";
+import { Search } from "lucide-react";
 
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -465,17 +466,41 @@ const TOOLBAR_ITEMS: { type: NodeType; icon: string; label: string }[] = [
   { type: "output",   icon: "◁", label: "Output" },
 ];
 
-const BLOCK_PRESETS: { label: string; icon: string; tf: { num: string; den: string }; blockLabel: string }[] = [
+type BlockPreset = {
+  label: string;
+  icon: string;
+  tf: { num: string; den: string };
+  blockLabel: string;
+  category?: "Plant" | "Controller" | "Signal" | "Approximation";
+  description?: string;
+};
+
+const BLOCK_PRESETS: BlockPreset[] = [
   { label: "Generic G(s)",   icon: "▢", tf: { num: "1", den: "s + 1" },           blockLabel: "G" },
   { label: "Gain K",         icon: "K", tf: { num: "K", den: "1" },               blockLabel: "K" },
   { label: "Integrator",     icon: "∫", tf: { num: "1", den: "s" },               blockLabel: "1/s" },
   { label: "Differentiator", icon: "d", tf: { num: "s", den: "1" },               blockLabel: "s" },
   { label: "PID",            icon: "P", tf: { num: "Kd*s^2+Kp*s+Ki", den: "s" },  blockLabel: "PID" },
-  { label: "1st Order",      icon: "1", tf: { num: "K", den: "Ts+1" },            blockLabel: "G₁" },
+  { label: "1st Order",      icon: "1", tf: { num: "K", den: "T*s+1" },            blockLabel: "G₁" },
   { label: "2nd Order",      icon: "2", tf: { num: "wn^2", den: "s^2+2*z*wn*s+wn^2" }, blockLabel: "G₂" },
   { label: "Lead Comp.",     icon: "↗", tf: { num: "s+a", den: "s+b" },           blockLabel: "Gc" },
   { label: "Lag Comp.",      icon: "↘", tf: { num: "s+b", den: "s+a" },           blockLabel: "Gc" },
   { label: "Delay (Padé)",   icon: "τ", tf: { num: "-s+2/T", den: "s+2/T" },     blockLabel: "e⁻ˢᵀ" },
+];
+
+const EDITOR_LIBRARY_PRESETS: Required<BlockPreset>[] = [
+  { label: "Generic G(s)", icon: "G", tf: { num: "1", den: "s + 1" }, blockLabel: "G", category: "Plant", description: "Editable plant block for quick model entry." },
+  { label: "Gain K", icon: "K", tf: { num: "2", den: "1" }, blockLabel: "K", category: "Controller", description: "Numeric proportional gain for loop shaping." },
+  { label: "Integrator", icon: "I", tf: { num: "1", den: "s" }, blockLabel: "I", category: "Controller", description: "Integral action for steady-state error reduction." },
+  { label: "Differentiator", icon: "D", tf: { num: "s", den: "1" }, blockLabel: "D", category: "Controller", description: "Ideal derivative action for transient studies." },
+  { label: "PI", icon: "PI", tf: { num: "s+0.5", den: "s" }, blockLabel: "PI", category: "Controller", description: "Classic PI compensator starting point." },
+  { label: "PD", icon: "PD", tf: { num: "0.1s+1", den: "1" }, blockLabel: "PD", category: "Controller", description: "Phase-adding PD compensator starting point." },
+  { label: "PID", icon: "PID", tf: { num: "0.1s^2+s+0.5", den: "s" }, blockLabel: "PID", category: "Controller", description: "Full PID controller with numeric defaults." },
+  { label: "1st Order", icon: "1", tf: { num: "1", den: "s+1" }, blockLabel: "G1", category: "Plant", description: "Stable first-order plant for baseline studies." },
+  { label: "2nd Order", icon: "2", tf: { num: "4", den: "s^2+2s+4" }, blockLabel: "G2", category: "Plant", description: "Damped second-order plant with visible poles." },
+  { label: "Lead Comp.", icon: "LD", tf: { num: "s+1", den: "s+5" }, blockLabel: "Gc", category: "Controller", description: "Lead compensator for phase margin and speed." },
+  { label: "Lag Comp.", icon: "LG", tf: { num: "s+1", den: "s+0.1" }, blockLabel: "Gc", category: "Controller", description: "Lag compensator for low-frequency gain." },
+  { label: "Delay (Pade)", icon: "T", tf: { num: "-s+2", den: "s+2" }, blockLabel: "Delay", category: "Approximation", description: "First-order Pade delay approximation." },
 ];
 
 const TEMPLATES = [
@@ -505,6 +530,8 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
   const [tool, setTool] = useState<"select" | "connect" | "delete">("select");
   const [connectMode, setConnectMode] = useState<"auto" | "series" | "parallel">("auto");
   const [showPresets, setShowPresets] = useState(false);
+  const [showLibrary, setShowLibrary] = useState(true);
+  const [librarySearch, setLibrarySearch] = useState("");
   const [alignGuides, setAlignGuides] = useState<{ x?: number; y?: number }>({});
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const clipboardRef = useRef<{ nodes: DiagramNode[]; edges: DiagramEdge[] }>({ nodes: [], edges: [] });
@@ -562,7 +589,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     setSelectedIds(new Set([id]));
   }, [diagram, pushDiagram]);
 
-  const addBlockPreset = useCallback((preset: typeof BLOCK_PRESETS[number]) => {
+  const addBlockPreset = useCallback((preset: BlockPreset) => {
     const blockCount = diagram.nodes.filter(n => n.type === "block").length;
     const id = genId("b");
     const newNode: DiagramNode = {
@@ -582,8 +609,8 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     const toNode = diagram.nodes.find(n => n.id === toId);
     if (!fromNode || !toNode) return;
 
-    let newNodes = [...diagram.nodes];
-    let newEdges = [...diagram.edges];
+    const newNodes = [...diagram.nodes];
+    const newEdges = [...diagram.edges];
 
     const bothBlocks = fromNode.type === "block" && toNode.type === "block";
     const dy = Math.abs(fromNode.y - toNode.y);
@@ -1184,11 +1211,30 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [deleteSelected, editingNodeId, undo, redo, addBlockPreset, setConnectMode, setTool, fitToView]);
+  }, [deleteSelected, editingNodeId, undo, redo, addBlockPreset, setConnectMode, setTool, fitToView, diagram.nodes, diagram.edges, pushDiagram, selectedIds, toast]);
 
   const editingNode = editingNodeId ? diagram.nodes.find(n => n.id === editingNodeId) : null;
 
   const viewBox = `${-pan.x / zoom} ${-pan.y / zoom} ${600 / zoom} ${350 / zoom}`;
+  const selectedNodes = useMemo(
+    () => diagram.nodes.filter(node => selectedIds.has(node.id)),
+    [diagram.nodes, selectedIds]
+  );
+  const selectedBlock = selectedNodes.length === 1 && selectedNodes[0].type === "block" ? selectedNodes[0] : null;
+  const filteredBlockPresets = useMemo(() => {
+    const query = librarySearch.trim().toLowerCase();
+    if (!query) return EDITOR_LIBRARY_PRESETS;
+
+    return EDITOR_LIBRARY_PRESETS.filter(preset =>
+      [preset.label, preset.blockLabel, preset.category, preset.description, preset.tf.num, preset.tf.den]
+        .some(value => value.toLowerCase().includes(query))
+    );
+  }, [librarySearch]);
+  const blockCounts = useMemo(() => ({
+    blocks: diagram.nodes.filter(n => n.type === "block").length,
+    controllers: diagram.nodes.filter(n => n.type === "block" && /^(K|I|D|PI|PD|PID|Gc)/i.test(n.label)).length,
+    sums: diagram.nodes.filter(n => n.type === "summing").length,
+  }), [diagram.nodes]);
 
   return (
     <div className="relative flex flex-col h-full">
@@ -1326,6 +1372,18 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
           </button>
         ))}
 
+        <button
+          onClick={() => setShowLibrary(v => !v)}
+          className={cn(
+            "px-2 py-1 text-[10px] font-mono rounded transition-all border",
+            showLibrary
+              ? "bg-primary/15 text-primary border-primary/35"
+              : "text-muted-foreground hover:text-primary hover:bg-primary/10 border-transparent hover:border-primary/30"
+          )}
+        >
+          Library
+        </button>
+
         <div className="flex-1" />
 
         {/* Zoom controls */}
@@ -1406,7 +1464,97 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
       )}
 
       {/* SVG Canvas */}
-      <div className="flex-1 overflow-hidden bg-background/50 relative">
+      <div className="flex-1 overflow-hidden bg-background/50 flex">
+        {showLibrary && (
+          <aside className="hidden w-64 flex-shrink-0 border-r border-border bg-card/70 p-3 md:flex md:flex-col">
+            <div className="mb-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-primary">Block Library</div>
+                  <div className="text-[10px] text-muted-foreground">{filteredBlockPresets.length} ready blocks</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowPresets(true)}
+                  className="rounded border border-border px-2 py-1 text-[9px] text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  Menu
+                </button>
+              </div>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  value={librarySearch}
+                  onChange={(event) => setLibrarySearch(event.target.value)}
+                  placeholder="Search controllers..."
+                  className="w-full rounded border border-border bg-secondary/60 py-1.5 pl-7 pr-2 text-xs text-foreground outline-none transition-colors focus:border-primary"
+                />
+              </div>
+            </div>
+
+            <div className="flex-1 space-y-2 overflow-y-auto pr-1">
+              {filteredBlockPresets.map(preset => (
+                <button
+                  key={`${preset.label}-${preset.blockLabel}`}
+                  type="button"
+                  onClick={() => addBlockPreset(preset)}
+                  className="w-full rounded border border-border bg-background/35 px-3 py-2 text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-7 w-8 items-center justify-center rounded border border-primary/30 bg-primary/10 text-[9px] font-bold text-primary">
+                      {preset.icon}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-semibold text-foreground">{preset.label}</div>
+                      <div className="text-[9px] text-muted-foreground">{preset.category}</div>
+                    </div>
+                  </div>
+                  <div className="mt-2 rounded border border-border bg-secondary/25 px-2 py-1 font-mono text-[9px] text-muted-foreground">
+                    ({preset.tf.num}) / ({preset.tf.den})
+                  </div>
+                  <div className="mt-1 line-clamp-2 text-[9px] leading-relaxed text-muted-foreground">
+                    {preset.description}
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-3 rounded border border-border bg-secondary/25 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Inspector</div>
+              {selectedBlock ? (
+                <div className="mt-2 space-y-1 text-[10px] text-muted-foreground">
+                  <div className="font-mono text-foreground">{selectedBlock.label}(s)</div>
+                  <div className="break-all font-mono">N: {selectedBlock.tf?.num}</div>
+                  <div className="break-all font-mono">D: {selectedBlock.tf?.den}</div>
+                  <button
+                    type="button"
+                    onClick={() => setEditingNodeId(selectedBlock.id)}
+                    className="mt-2 w-full rounded border border-primary/30 bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary transition-colors hover:bg-primary/15"
+                  >
+                    Edit Transfer Function
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-2 grid grid-cols-3 gap-1 text-center text-[9px] text-muted-foreground">
+                  <div className="rounded border border-border bg-background/30 px-1 py-1">
+                    <div className="font-mono text-foreground">{blockCounts.blocks}</div>
+                    <div>Blocks</div>
+                  </div>
+                  <div className="rounded border border-border bg-background/30 px-1 py-1">
+                    <div className="font-mono text-foreground">{blockCounts.controllers}</div>
+                    <div>Ctrl</div>
+                  </div>
+                  <div className="rounded border border-border bg-background/30 px-1 py-1">
+                    <div className="font-mono text-foreground">{blockCounts.sums}</div>
+                    <div>Sums</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </aside>
+        )}
+
+        <div className="relative flex-1 overflow-hidden">
         <svg
           ref={svgRef}
           width="100%"
@@ -1637,6 +1785,7 @@ export function DiagramEditor({ onAnalyze }: DiagramEditorProps) {
 
         {/* Gain Tuner */}
         <GainTuner diagram={diagram} onAnalyze={onAnalyze} />
+        </div>
       </div>
 
       {/* Inline toast notification */}

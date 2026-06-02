@@ -1,6 +1,14 @@
 import React, { useMemo, useRef, useCallback, useState } from "react";
 import { SolverResult } from "@/lib/solver";
-import { poly, roots, evaluate } from "@/lib/polynomial";
+import { format, poly, roots, evaluate } from "@/lib/polynomial";
+import { computeMargins } from "@/lib/margins";
+import {
+  buildControllerDesign,
+  CONTROLLER_SPECS,
+  DEFAULT_CONTROLLER_PARAMS,
+  type ControllerKind,
+  type ControllerParams,
+} from "@/lib/controllerDesign";
 import { Slider } from "@/components/ui/slider";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis,
@@ -8,7 +16,8 @@ import {
   ReferenceArea,
 } from "recharts";
 import html2canvas from "html2canvas";
-import { Download } from "lucide-react";
+import { Activity, Download, GitBranch, SlidersHorizontal, Target, Zap } from "lucide-react";
+import { cn } from "@/lib/utils";
 // ─── SVG Crosshair Layer ─────────────────────────────────────────────────────
 
 function SvgCrosshairLayer({
@@ -946,9 +955,90 @@ function NyquistPlot({ result }: { result: SolverResult }) {
 
 // ─── Root Locus Plot (SVG) ───────────────────────────────────────────────────
 
-function RootLocusPlot({ result }: { result: SolverResult }) {
+type RootLocusEditMode = "inspect" | "zero" | "pole" | "target";
+
+type RootLocusPlotProps = {
+  result: SolverResult;
+  controllerKind: ControllerKind;
+  controllerParams: ControllerParams;
+  onControllerKindChange: (kind: ControllerKind) => void;
+  onControllerParamChange: (key: keyof ControllerParams, value: number) => void;
+};
+
+function rootsForLocus(coeffs: readonly number[]): Array<{ re: number; im: number }> {
+  const trimmed = [...coeffs];
+  while (trimmed.length > 1 && Math.abs(trimmed[trimmed.length - 1]) < 1e-14) trimmed.pop();
+  const degree = trimmed.length - 1;
+  if (degree <= 0) return [];
+  if (degree <= 2) return roots(poly(trimmed));
+
+  const leading = trimmed[degree];
+  if (Math.abs(leading) < 1e-14) return [];
+  const normalized = trimmed.map(c => c / leading);
+  const radius = 1 + Math.max(...normalized.slice(0, degree).map(c => Math.abs(c)));
+  let estimates = Array.from({ length: degree }, (_, index) => {
+    const angle = (2 * Math.PI * index) / degree;
+    return {
+      re: radius * Math.cos(angle),
+      im: radius * Math.sin(angle),
+    };
+  });
+
+  const evalComplex = (z: { re: number; im: number }) => {
+    let acc = { re: normalized[degree], im: 0 };
+    for (let i = degree - 1; i >= 0; i--) {
+      acc = {
+        re: acc.re * z.re - acc.im * z.im + normalized[i],
+        im: acc.re * z.im + acc.im * z.re,
+      };
+    }
+    return acc;
+  };
+
+  for (let iter = 0; iter < 90; iter++) {
+    let maxDelta = 0;
+    estimates = estimates.map((root, i) => {
+      const value = evalComplex(root);
+      let denom = { re: 1, im: 0 };
+      for (let j = 0; j < estimates.length; j++) {
+        if (i === j) continue;
+        const diff = { re: root.re - estimates[j].re, im: root.im - estimates[j].im };
+        denom = {
+          re: denom.re * diff.re - denom.im * diff.im,
+          im: denom.re * diff.im + denom.im * diff.re,
+        };
+      }
+      const denomMagSq = denom.re * denom.re + denom.im * denom.im;
+      if (denomMagSq < 1e-24) return root;
+      const delta = {
+        re: (value.re * denom.re + value.im * denom.im) / denomMagSq,
+        im: (value.im * denom.re - value.re * denom.im) / denomMagSq,
+      };
+      maxDelta = Math.max(maxDelta, Math.hypot(delta.re, delta.im));
+      return { re: root.re - delta.re, im: root.im - delta.im };
+    });
+    if (maxDelta < 1e-9) break;
+  }
+
+  return estimates
+    .map(root => ({ re: Math.abs(root.re) < 1e-10 ? 0 : root.re, im: Math.abs(root.im) < 1e-10 ? 0 : root.im }))
+    .sort((a, b) => b.re - a.re || b.im - a.im);
+}
+
+function RootLocusPlot({
+  result,
+  controllerKind,
+  controllerParams,
+  onControllerKindChange,
+  onControllerParamChange,
+}: RootLocusPlotProps) {
   const [kValue, setKValue] = useState(1);
   const [kMax, setKMaxState] = useState(100);
+  const [editMode, setEditMode] = useState<RootLocusEditMode>("inspect");
+  const [hoverPoint, setHoverPoint] = useState<{ re: number; im: number } | null>(null);
+  const [targetZeta, setTargetZeta] = useState(0.7);
+  const [targetSettlingTime, setTargetSettlingTime] = useState(2);
+  const [designNote, setDesignNote] = useState("Select a placement mode, then click the s-plane.");
 
   const { loci, olPoles, olZeros, numC, denC } = useMemo(() => {
     const { num, den } = result.equivalentTF;
@@ -960,114 +1050,101 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
 
     const olp = roots(den);
     const olz = roots(num);
-
-    const kValues: number[] = [];
-    for (let e = -2; e <= 3; e += 0.03) kValues.push(Math.pow(10, e));
-    kValues.unshift(0.001, 0.005);
+    const kValues: number[] = [0];
+    for (let exp = -3; exp <= 4; exp += 0.025) kValues.push(Math.pow(10, exp));
 
     const branches: Array<Array<{ re: number; im: number; k: number }>> = [];
-    for (let i = 0; i < olp.length; i++) branches.push([]);
+    for (let i = 0; i < Math.max(olp.length, 1); i++) branches.push([]);
 
     for (const K of kValues) {
       const charCoeffs = denCoeffs.map((d, i) => d + K * numCoeffs[i]);
       while (charCoeffs.length > 1 && Math.abs(charCoeffs[charCoeffs.length - 1]) < 1e-15) charCoeffs.pop();
-
-      const charPoly = { coeffs: charCoeffs };
-      const rts = roots(charPoly);
-
+      const rts = rootsForLocus(charCoeffs).filter(p => !isNaN(p.re));
       const used = new Set<number>();
-      const branchOrder: number[] = [];
 
       for (let b = 0; b < branches.length; b++) {
         const prev = branches[b].length > 0
           ? branches[b][branches[b].length - 1]
           : olp[b] || { re: 0, im: 0 };
 
-        let bestIdx = -1, bestDist = Infinity;
+        let bestIdx = -1;
+        let bestDist = Infinity;
         for (let r = 0; r < rts.length; r++) {
-          if (used.has(r) || isNaN(rts[r].re)) continue;
+          if (used.has(r)) continue;
           const dist = (rts[r].re - prev.re) ** 2 + (rts[r].im - prev.im) ** 2;
-          if (dist < bestDist) { bestDist = dist; bestIdx = r; }
+          if (dist < bestDist) {
+            bestDist = dist;
+            bestIdx = r;
+          }
         }
         if (bestIdx >= 0) {
           used.add(bestIdx);
-          branchOrder.push(bestIdx);
+          branches[b].push({ re: rts[bestIdx].re, im: rts[bestIdx].im, k: K });
         }
       }
-
-      branchOrder.forEach((ri, b) => {
-        if (ri >= 0 && ri < rts.length) {
-          branches[b].push({ re: rts[ri].re, im: rts[ri].im, k: K });
-        }
-      });
     }
 
     return { loci: branches, olPoles: olp, olZeros: olz, numC: numCoeffs, denC: denCoeffs };
   }, [result]);
 
-  // Compute closed-loop poles at selected K
-  const clPoles = useMemo(() => {
-    const charCoeffs = denC.map((d, i) => d + kValue * numC[i]);
+  const polesAtGain = useCallback((gain: number) => {
+    const charCoeffs = denC.map((d, i) => d + gain * numC[i]);
     while (charCoeffs.length > 1 && Math.abs(charCoeffs[charCoeffs.length - 1]) < 1e-15) charCoeffs.pop();
-    return roots(poly(charCoeffs)).filter(p => !isNaN(p.re));
-  }, [kValue, numC, denC]);
+    return rootsForLocus(charCoeffs).filter(p => !isNaN(p.re));
+  }, [denC, numC]);
 
-  // Compute breakaway / break-in points numerically
-  // Breakaway points occur where dK/dσ = 0 on the real axis, with K(σ) = -D(σ)/N(σ) > 0
+  const summarizePoles = useCallback((poles: Array<{ re: number; im: number }>) => {
+    if (poles.length === 0) {
+      return { stable: false, damping: NaN, wn: NaN, settling: Infinity, overshoot: Infinity, dominant: null as { re: number; im: number } | null };
+    }
+
+    const dominant = poles.reduce((best, pole) => pole.re > best.re ? pole : best, poles[0]);
+    const stable = poles.every(pole => pole.re < -1e-8);
+    const wn = Math.hypot(dominant.re, dominant.im);
+    const damping = stable && wn > 1e-10 ? Math.max(0, Math.min(1, -dominant.re / wn)) : 0;
+    const settling = stable ? 4 / Math.max(1e-6, -dominant.re) : Infinity;
+    const overshoot = damping > 0 && damping < 1
+      ? Math.exp((-Math.PI * damping) / Math.sqrt(1 - damping * damping)) * 100
+      : stable ? 0 : Infinity;
+
+    return { stable, damping, wn, settling, overshoot, dominant };
+  }, []);
+
+  const clPoles = useMemo(() => polesAtGain(kValue), [kValue, polesAtGain]);
+  const currentMetrics = useMemo(() => summarizePoles(clPoles), [clPoles, summarizePoles]);
+
   const breakawayPoints = useMemo(() => {
     const num = { coeffs: [...numC] };
     const den = { coeffs: [...denC] };
     const points: Array<{ re: number; type: "breakaway" | "breakin" }> = [];
-
-    // Sample the real axis finely
     const bound = Math.max(
       ...olPoles.filter(p => !isNaN(p.re)).map(p => Math.abs(p.re)),
       ...olZeros.filter(z => !isNaN(z.re)).map(z => Math.abs(z.re)),
       2
     ) + 2;
-
-    const step = 0.005;
+    const step = 0.01;
     const kOfSigma = (sigma: number): number => {
       const n = evaluate(num, sigma);
       if (Math.abs(n) < 1e-12) return NaN;
       return -evaluate(den, sigma) / n;
     };
 
-    // Find local extrema of K(σ) where K > 0
     let prevK = kOfSigma(-bound);
     let prevSlope = 0;
-    const DELTA = step * 0.5;
-
     for (let sigma = -bound + step; sigma <= bound; sigma += step) {
       const k = kOfSigma(sigma);
-      if (isNaN(k) || isNaN(prevK)) { prevK = k; continue; }
-
+      if (isNaN(k) || isNaN(prevK)) {
+        prevK = k;
+        continue;
+      }
       const slope = k - prevK;
-      // Detect sign change in slope (extremum)
       if (prevSlope !== 0 && slope * prevSlope < 0) {
-        // Refine with bisection
-        let lo = sigma - step, hi = sigma;
-        for (let iter = 0; iter < 20; iter++) {
-          const mid = (lo + hi) / 2;
-          const kMid = kOfSigma(mid);
-          const kMidPlus = kOfSigma(mid + DELTA * 0.01);
-          if (isNaN(kMid) || isNaN(kMidPlus)) break;
-          if ((kMidPlus - kMid) * prevSlope > 0) lo = mid; else hi = mid;
-        }
-        const bpSigma = (lo + hi) / 2;
+        const bpSigma = sigma - step / 2;
         const bpK = kOfSigma(bpSigma);
-
-        // Only include if K > 0 (valid gain) and point is on the real-axis root locus
-        if (!isNaN(bpK) && bpK > 0.001) {
-          // Breakaway: branches leave real axis (local max of K)
-          // Break-in: branches return to real axis (local min of K)
-          const type = prevSlope > 0 ? "breakaway" : "breakin";
-          // Check it's not too close to a pole or zero
-          const nearPole = olPoles.some(p => Math.abs(p.re - bpSigma) < 0.05 && Math.abs(p.im) < 0.05);
-          const nearZero = olZeros.some(z => Math.abs(z.re - bpSigma) < 0.05 && Math.abs(z.im) < 0.05);
-          if (!nearPole && !nearZero) {
-            points.push({ re: bpSigma, type });
-          }
+        const nearPole = olPoles.some(p => Math.abs(p.re - bpSigma) < 0.05 && Math.abs(p.im) < 0.05);
+        const nearZero = olZeros.some(z => Math.abs(z.re - bpSigma) < 0.05 && Math.abs(z.im) < 0.05);
+        if (!isNaN(bpK) && bpK > 0.001 && !nearPole && !nearZero) {
+          points.push({ re: bpSigma, type: prevSlope > 0 ? "breakaway" : "breakin" });
         }
       }
       prevSlope = slope;
@@ -1076,39 +1153,62 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
     return points;
   }, [numC, denC, olPoles, olZeros]);
 
-  // Compute asymptotes: angles and centroid (Ogata §6-3, Nise §8.2)
-  // n = #poles, m = #zeros, asymptotes exist when n > m
-  // Centroid σ_a = (Σ poles - Σ zeros) / (n - m)
-  // Angles θ_k = (2k+1)π / (n-m), k = 0,1,...,n-m-1
   const asymptotes = useMemo(() => {
     const realPoles = olPoles.filter(p => !isNaN(p.re));
     const realZeros = olZeros.filter(z => !isNaN(z.re));
-    const n = realPoles.length;
-    const m = realZeros.length;
-    const diff = n - m;
+    const diff = realPoles.length - realZeros.length;
     if (diff <= 0) return null;
-
     const sumPoles = realPoles.reduce((s, p) => s + p.re, 0);
     const sumZeros = realZeros.reduce((s, z) => s + z.re, 0);
-    const centroid = (sumPoles - sumZeros) / diff;
-
-    const angles: number[] = [];
-    for (let k = 0; k < diff; k++) {
-      angles.push(((2 * k + 1) * Math.PI) / diff);
-    }
-
-    return { centroid, angles, n, m };
+    return {
+      centroid: (sumPoles - sumZeros) / diff,
+      angles: Array.from({ length: diff }, (_, k) => ((2 * k + 1) * Math.PI) / diff),
+      n: realPoles.length,
+      m: realZeros.length,
+    };
   }, [olPoles, olZeros]);
 
-  // Compute bounds
+  const controllerMarkers = useMemo(() => {
+    const zeros: Array<{ re: number; im: number; label: string }> = [];
+    const poles: Array<{ re: number; im: number; label: string }> = [];
+    const kp = Math.max(1e-9, controllerParams.kp);
+    const ki = Math.max(0, controllerParams.ki);
+    const kd = Math.max(0, controllerParams.kd);
+
+    if (controllerKind === "pi" || controllerKind === "pid") {
+      poles.push({ re: 0, im: 0, label: "C pole" });
+    }
+    if (controllerKind === "pi" && ki > 0) {
+      zeros.push({ re: -ki / kp, im: 0, label: "PI zero" });
+    }
+    if (controllerKind === "pd" && kd > 0) {
+      zeros.push({ re: -kp / kd, im: 0, label: "PD zero" });
+    }
+    if (controllerKind === "pid" && kd > 0) {
+      rootsForLocus([ki, kp, kd])
+        .filter(z => !isNaN(z.re))
+        .forEach((z, index) => zeros.push({ re: z.re, im: z.im, label: `PID zero ${index + 1}` }));
+    }
+    if (controllerKind === "lead" || controllerKind === "lag") {
+      zeros.push({ re: -Math.max(1e-6, controllerParams.zero), im: 0, label: `${controllerKind} zero` });
+      poles.push({ re: -Math.max(1e-6, controllerParams.pole), im: 0, label: `${controllerKind} pole` });
+    }
+
+    return { zeros, poles };
+  }, [controllerKind, controllerParams]);
+
   const allPts = [
-    ...olPoles, ...olZeros,
-    ...loci.flatMap(b => b),
-  ].filter(p => !isNaN(p.re) && Math.abs(p.re) < 100 && Math.abs(p.im) < 100);
+    ...olPoles,
+    ...olZeros,
+    ...controllerMarkers.zeros,
+    ...controllerMarkers.poles,
+    ...clPoles,
+    ...loci.flatMap(branch => branch),
+  ].filter(p => !isNaN(p.re) && Math.abs(p.re) < 150 && Math.abs(p.im) < 150);
 
   if (allPts.length < 2) {
     return (
-      <div className="flex items-center justify-center h-full text-xs text-muted-foreground font-mono">
+      <div className="flex min-h-[420px] items-center justify-center text-xs font-mono text-muted-foreground">
         Insufficient data for root locus
       </div>
     );
@@ -1116,16 +1216,15 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
 
   const reVals = allPts.map(p => p.re);
   const imVals = allPts.map(p => p.im);
-  const margin = 0.5;
-  const maxAbs = Math.max(
-    Math.max(...reVals.map(Math.abs), ...imVals.map(Math.abs)),
-    0.5
-  ) + margin;
-
-  const W = 280, H = 280;
-  const cx = W / 2, cy = H / 2;
-  const scale = (W / 2 - 20) / maxAbs;
-
+  const maxAbs = Math.max(Math.max(...reVals.map(Math.abs), ...imVals.map(Math.abs)), 0.75) + 0.65;
+  const W = 620;
+  const H = 430;
+  const pad = { l: 46, r: 22, t: 24, b: 38 };
+  const plotW = W - pad.l - pad.r;
+  const plotH = H - pad.t - pad.b;
+  const cx = pad.l + plotW / 2;
+  const cy = pad.t + plotH / 2;
+  const scale = Math.min(plotW, plotH) / (2 * maxAbs);
   const toX = (re: number) => cx + re * scale;
   const toY = (im: number) => cy - im * scale;
 
@@ -1133,351 +1232,475 @@ function RootLocusPlot({ result }: { result: SolverResult }) {
     "hsl(var(--primary))",
     "hsl(var(--accent))",
     "hsl(160, 70%, 50%)",
-    "hsl(30, 80%, 55%)",
-    "hsl(280, 60%, 55%)",
-    "hsl(350, 70%, 55%)",
+    "hsl(32, 90%, 58%)",
+    "hsl(280, 65%, 62%)",
+    "hsl(350, 75%, 60%)",
   ];
 
-  const isStableAtK = clPoles.every(p => p.re <= 1e-8);
+  const formatNumber = (value: number, digits = 3) => {
+    if (Number.isNaN(value)) return "n/a";
+    if (!Number.isFinite(value)) return "inf";
+    if (Math.abs(value) >= 100) return value.toFixed(1);
+    if (Math.abs(value) >= 10) return value.toFixed(2);
+    return value.toFixed(digits);
+  };
+
+  const svgPointFromEvent = (event: React.MouseEvent<SVGSVGElement>) => {
+    const svg = event.currentTarget;
+    const pt = svg.createSVGPoint();
+    pt.x = event.clientX;
+    pt.y = event.clientY;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+    const svgPt = pt.matrixTransform(ctm.inverse());
+    return { re: (svgPt.x - cx) / scale, im: -(svgPt.y - cy) / scale };
+  };
+
+  const applyControllerZero = (re: number) => {
+    const zero = Math.max(0.001, Math.abs(re || 0.001));
+    if (controllerKind === "lead" || controllerKind === "lag") {
+      onControllerParamChange("zero", zero);
+      onControllerKindChange(zero < controllerParams.pole ? "lead" : "lag");
+      setDesignNote(`Moved compensator zero to s = -${formatNumber(zero)}.`);
+      return;
+    }
+    if (controllerKind === "pi") {
+      onControllerParamChange("ki", Math.max(0.001, controllerParams.kp * zero));
+      setDesignNote(`Moved PI zero to s = -${formatNumber(zero)} by updating Ki.`);
+      return;
+    }
+    if (controllerKind === "pd") {
+      onControllerParamChange("kd", Math.max(0.001, controllerParams.kp / zero));
+      setDesignNote(`Moved PD zero to s = -${formatNumber(zero)} by updating Kd.`);
+      return;
+    }
+    if (controllerKind === "pid") {
+      onControllerParamChange("ki", Math.max(0.001, controllerParams.kp * zero));
+      setDesignNote(`Adjusted PID's PI zero estimate toward s = -${formatNumber(zero)}.`);
+      return;
+    }
+    onControllerKindChange("pd");
+    onControllerParamChange("kd", Math.max(0.001, controllerParams.kp / zero));
+    setDesignNote(`Switched to PD and placed a zero at s = -${formatNumber(zero)}.`);
+  };
+
+  const applyControllerPole = (re: number) => {
+    const pole = Math.max(0.001, Math.abs(re || 0.001));
+    if (controllerKind === "lead" || controllerKind === "lag") {
+      onControllerParamChange("pole", pole);
+      onControllerKindChange(controllerParams.zero < pole ? "lead" : "lag");
+      setDesignNote(`Moved compensator pole to s = -${formatNumber(pole)}.`);
+      return;
+    }
+    onControllerKindChange(controllerParams.zero < pole ? "lead" : "lag");
+    onControllerParamChange("pole", pole);
+    setDesignNote(`Switched to lead/lag form and placed a finite pole at s = -${formatNumber(pole)}.`);
+  };
+
+  const pickNearestGain = (re: number, im: number) => {
+    let best: { re: number; im: number; k: number } | null = null;
+    let bestDist = Infinity;
+    for (const point of loci.flatMap(branch => branch)) {
+      const dist = (point.re - re) ** 2 + (point.im - im) ** 2;
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = point;
+      }
+    }
+    if (best) {
+      const nextK = Math.max(0, Math.min(kMax, best.k));
+      setKValue(nextK);
+      setDesignNote(`Selected K = ${formatNumber(nextK)} from the nearest locus point.`);
+    }
+  };
+
+  const handlePlotClick = (event: React.MouseEvent<SVGSVGElement>) => {
+    if (editMode === "inspect") return;
+    const point = svgPointFromEvent(event);
+    if (!point) return;
+    const realAxisRe = point.re > -0.001 ? -Math.max(Math.abs(point.re), 0.05) : point.re;
+    if (editMode === "zero") applyControllerZero(realAxisRe);
+    if (editMode === "pole") applyControllerPole(realAxisRe);
+    if (editMode === "target") pickNearestGain(point.re, point.im);
+  };
+
+  const handlePlotMove = (event: React.MouseEvent<SVGSVGElement>) => {
+    if (editMode === "inspect") {
+      setHoverPoint(null);
+      return;
+    }
+    setHoverPoint(svgPointFromEvent(event));
+  };
+
+  const optimizeGain = () => {
+    let best: { k: number; cost: number; metrics: ReturnType<typeof summarizePoles> } | null = null;
+    let fallback: { k: number; cost: number; metrics: ReturnType<typeof summarizePoles> } | null = null;
+    const maxExp = Math.max(-2, Math.log10(Math.max(kMax, 1)));
+    for (let exp = -3; exp <= maxExp; exp += 0.0125) {
+      const candidateK = Math.pow(10, exp);
+      const metrics = summarizePoles(polesAtGain(candidateK));
+      const fallbackCost = (metrics.dominant?.re ?? 999) + (metrics.stable ? 0 : 50);
+      if (!fallback || fallbackCost < fallback.cost) fallback = { k: candidateK, cost: fallbackCost, metrics };
+
+      if (!metrics.stable || !Number.isFinite(metrics.damping) || !Number.isFinite(metrics.settling)) continue;
+
+      const dampingCost = Math.abs(metrics.damping - targetZeta) * 3.5;
+      const settlingCost = targetSettlingTime > 0 ? Math.abs(Math.log(metrics.settling / targetSettlingTime)) : 0;
+      const speedBias = metrics.settling * 0.02;
+      const cost = dampingCost + settlingCost + speedBias;
+      if (!best || cost < best.cost) best = { k: candidateK, cost, metrics };
+    }
+
+    const winner = best ?? fallback;
+    if (winner) {
+      setKValue(Math.min(kMax, winner.k));
+      setDesignNote(
+        best
+          ? `Optimized K = ${formatNumber(winner.k)} for zeta ${formatNumber(winner.metrics.damping, 2)} and Ts ${formatNumber(winner.metrics.settling, 2)}s.`
+          : `No stable gain met the target; selected K = ${formatNumber(winner.k)} as the least unstable candidate.`
+      );
+    }
+  };
+
+  const commitGainToController = () => {
+    const gain = Math.max(1e-6, kValue);
+    if (controllerKind === "none") {
+      onControllerKindChange("p");
+      onControllerParamChange("kp", gain);
+    } else if (controllerKind === "lead" || controllerKind === "lag") {
+      onControllerParamChange("gain", controllerParams.gain * gain);
+    } else {
+      onControllerParamChange("kp", controllerParams.kp * gain);
+      if (controllerKind === "pi" || controllerKind === "pid") onControllerParamChange("ki", controllerParams.ki * gain);
+      if (controllerKind === "pd" || controllerKind === "pid") onControllerParamChange("kd", controllerParams.kd * gain);
+    }
+    setKValue(1);
+    setDesignNote(`Committed loop gain ${formatNumber(gain)} into C(s); locus K reset to 1.`);
+  };
+
+  const modeButtonClass = (mode: RootLocusEditMode) => cn(
+    "flex items-center justify-center gap-1 rounded border px-2 py-1.5 text-[10px] font-semibold transition-colors",
+    editMode === mode
+      ? "border-primary bg-primary/15 text-primary"
+      : "border-border bg-background/35 text-muted-foreground hover:border-primary/35 hover:text-foreground"
+  );
+
+  const majorTicks = Array.from({ length: 9 }, (_, i) => -4 + i).filter(value => Math.abs(value) <= maxAbs);
+  const wnValues = [0.5, 1, 2, 5, 10].filter(wn => wn < maxAbs * 0.95);
 
   return (
-    <div className="space-y-2">
-      <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} className="max-w-[280px] mx-auto">
-        {/* Axes */}
-        <line x1={0} y1={cy} x2={W} y2={cy} stroke="hsl(var(--border))" strokeWidth={1} />
-        <line x1={cx} y1={0} x2={cx} y2={H} stroke="hsl(var(--border))" strokeWidth={1} />
-        <text x={W - 10} y={cy - 4} fill="hsl(var(--muted-foreground))" fontSize={8} fontFamily="monospace">Re</text>
-        <text x={cx + 4} y={10} fill="hsl(var(--muted-foreground))" fontSize={8} fontFamily="monospace">Im</text>
+    <div className="grid min-h-[520px] gap-3 xl:grid-cols-[minmax(0,1fr)_280px]">
+      <div className="overflow-hidden rounded-lg border border-border bg-card/35">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-secondary/20 px-3 py-2">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-foreground">Root Locus Design Canvas</div>
+            <div className="text-[10px] text-muted-foreground">Click-to-place real-axis controller poles/zeros and tune gain from the s-plane.</div>
+          </div>
+          <div className="grid grid-cols-4 gap-1 text-center text-[9px]">
+            <div className="rounded border border-border bg-background/35 px-2 py-1">
+              <div className="text-muted-foreground">K</div>
+              <div className="font-mono text-foreground">{formatNumber(kValue, 2)}</div>
+            </div>
+            <div className="rounded border border-border bg-background/35 px-2 py-1">
+              <div className="text-muted-foreground">zeta</div>
+              <div className="font-mono text-foreground">{formatNumber(currentMetrics.damping, 2)}</div>
+            </div>
+            <div className="rounded border border-border bg-background/35 px-2 py-1">
+              <div className="text-muted-foreground">Ts</div>
+              <div className="font-mono text-foreground">{formatNumber(currentMetrics.settling, 2)}s</div>
+            </div>
+            <div className="rounded border border-border bg-background/35 px-2 py-1">
+              <div className="text-muted-foreground">State</div>
+              <div className={cn("font-mono font-semibold", currentMetrics.stable ? "text-success" : "text-destructive")}>
+                {currentMetrics.stable ? "stable" : "unstable"}
+              </div>
+            </div>
+          </div>
+        </div>
 
-        {/* LHP shading */}
-        <rect x={0} y={0} width={cx} height={H} fill="hsl(var(--primary) / 0.03)" />
+        <svg
+          width="100%"
+          height="430"
+          viewBox={`0 0 ${W} ${H}`}
+          className={cn("block w-full bg-background", editMode !== "inspect" && "cursor-crosshair")}
+          onClick={handlePlotClick}
+          onMouseMove={handlePlotMove}
+          onMouseLeave={() => setHoverPoint(null)}
+        >
+          <rect x={pad.l} y={pad.t} width={Math.max(0, cx - pad.l)} height={plotH} fill="hsl(var(--success) / 0.035)" />
+          <rect x={cx} y={pad.t} width={Math.max(0, W - pad.r - cx)} height={plotH} fill="hsl(var(--destructive) / 0.035)" />
 
-        {/* jω axis */}
-        <line x1={cx} y1={0} x2={cx} y2={H} stroke="hsl(var(--border))" strokeWidth={0.5} strokeDasharray="4 2" />
-
-        {/* Constant damping ratio ζ lines */}
-        {[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9].map(zeta => {
-          // ζ = cos(θ) where θ is angle from negative real axis
-          // Line from origin into LHP at angle θ = acos(ζ)
-          const theta = Math.acos(zeta);
-          const lineLen = maxAbs * 1.8;
-          // Upper half: angle π - θ from positive real axis
-          const dxU = -lineLen * Math.cos(theta);
-          const dyU = lineLen * Math.sin(theta);
-          // Lower half: conjugate
-          return (
-            <g key={`zeta${zeta}`}>
-              <line
-                x1={cx} y1={cy}
-                x2={cx + dxU * scale} y2={cy - dyU * scale}
-                stroke="hsl(var(--muted-foreground) / 0.15)"
-                strokeWidth={0.7}
-                strokeDasharray="3 3"
-              />
-              <line
-                x1={cx} y1={cy}
-                x2={cx + dxU * scale} y2={cy + dyU * scale}
-                stroke="hsl(var(--muted-foreground) / 0.15)"
-                strokeWidth={0.7}
-                strokeDasharray="3 3"
-              />
-              {/* Label on upper line */}
-              {(() => {
-                const labelDist = maxAbs * 0.75;
-                const lx = cx + (-labelDist * Math.cos(theta)) * scale;
-                const ly = cy - (labelDist * Math.sin(theta)) * scale;
-                return (
-                  <text
-                    x={lx} y={ly - 3}
-                    fill="hsl(var(--muted-foreground) / 0.4)"
-                    fontSize={6}
-                    fontFamily="monospace"
-                    textAnchor="middle"
-                    transform={`rotate(${-(90 - theta * 180 / Math.PI)}, ${lx}, ${ly - 3})`}
-                  >
-                    ζ={zeta}
-                  </text>
-                );
-              })()}
+          {majorTicks.map(tick => (
+            <g key={`xt${tick}`}>
+              <line x1={toX(tick)} y1={pad.t} x2={toX(tick)} y2={H - pad.b} stroke="hsl(var(--border) / 0.42)" strokeWidth={0.7} />
+              <text x={toX(tick)} y={H - 14} textAnchor="middle" fill="hsl(var(--muted-foreground))" fontSize={9} fontFamily="monospace">
+                {tick}
+              </text>
             </g>
-          );
-        })}
+          ))}
+          {majorTicks.map(tick => (
+            <g key={`yt${tick}`}>
+              <line x1={pad.l} y1={toY(tick)} x2={W - pad.r} y2={toY(tick)} stroke="hsl(var(--border) / 0.35)" strokeWidth={0.7} />
+              <text x={pad.l - 8} y={toY(tick) + 3} textAnchor="end" fill="hsl(var(--muted-foreground))" fontSize={9} fontFamily="monospace">
+                {tick}
+              </text>
+            </g>
+          ))}
 
-        {/* Constant natural frequency ωn circles */}
-        {(() => {
-          // Choose ωn values based on the plot scale
-          const wnMax = maxAbs * 0.95;
-          const step = Math.pow(10, Math.floor(Math.log10(wnMax)));
-          const candidates = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100].map(m => m * step / 10).filter(v => v > 0.05 && v < wnMax);
-          // Pick at most 5 evenly spaced values
-          const wnValues: number[] = [];
-          const desired = Math.min(candidates.length, 5);
-          for (let i = 0; i < desired; i++) {
-            wnValues.push(candidates[Math.round(i * (candidates.length - 1) / (desired - 1))]);
-          }
-          return wnValues.map(wn => {
-            const r = wn * scale;
+          <line x1={pad.l} y1={cy} x2={W - pad.r} y2={cy} stroke="hsl(var(--foreground) / 0.32)" strokeWidth={1.2} />
+          <line x1={cx} y1={pad.t} x2={cx} y2={H - pad.b} stroke="hsl(var(--foreground) / 0.32)" strokeWidth={1.2} strokeDasharray="6 4" />
+          <text x={W - pad.r - 8} y={cy - 8} fill="hsl(var(--muted-foreground))" fontSize={10} fontFamily="monospace">Re</text>
+          <text x={cx + 7} y={pad.t + 12} fill="hsl(var(--muted-foreground))" fontSize={10} fontFamily="monospace">Im</text>
+
+          {[0.2, 0.4, 0.6, 0.8].map(zeta => {
+            const theta = Math.acos(zeta);
+            const lineLen = maxAbs * 1.5;
+            const dx = -lineLen * Math.cos(theta) * scale;
+            const dy = lineLen * Math.sin(theta) * scale;
             return (
-              <g key={`wn${wn}`}>
-                <circle
-                  cx={cx} cy={cy} r={r}
-                  fill="none"
-                  stroke="hsl(var(--muted-foreground) / 0.12)"
-                  strokeWidth={0.7}
-                  strokeDasharray="2 3"
-                />
-                <text
-                  x={cx + 3} y={cy - r - 2}
-                  fill="hsl(var(--muted-foreground) / 0.35)"
-                  fontSize={5.5}
-                  fontFamily="monospace"
-                >
-                  ωn={wn % 1 === 0 ? wn : wn.toPrecision(2)}
+              <g key={`zeta${zeta}`}>
+                <line x1={cx} y1={cy} x2={cx + dx} y2={cy - dy} stroke="hsl(var(--muted-foreground) / 0.16)" strokeWidth={0.9} strokeDasharray="4 5" />
+                <line x1={cx} y1={cy} x2={cx + dx} y2={cy + dy} stroke="hsl(var(--muted-foreground) / 0.16)" strokeWidth={0.9} strokeDasharray="4 5" />
+                <text x={cx + dx * 0.72} y={cy - dy * 0.72 - 4} fill="hsl(var(--muted-foreground) / 0.45)" fontSize={8} fontFamily="monospace">
+                  z={zeta}
                 </text>
               </g>
             );
-          });
-        })()}
+          })}
 
-        {/* Asymptote lines and centroid */}
-        {asymptotes && (() => {
-          const { centroid, angles } = asymptotes;
-          const cxA = toX(centroid);
-          const cyA = toY(0);
-          const lineLen = maxAbs * 2.5; // extend well beyond visible area
-          return (
-            <g>
-              {/* Asymptote lines */}
-              {angles.map((angle, i) => {
-                const dx = Math.cos(angle) * lineLen * scale;
-                const dy = -Math.sin(angle) * lineLen * scale; // negate for SVG coords
-                return (
-                  <line
-                    key={`asym${i}`}
-                    x1={cxA}
-                    y1={cyA}
-                    x2={cxA + dx}
-                    y2={cyA + dy}
-                    stroke="hsl(var(--muted-foreground) / 0.35)"
-                    strokeWidth={1}
-                    strokeDasharray="6 3"
-                  />
-                );
-              })}
-              {/* Centroid marker */}
-              <line x1={cxA - 5} y1={cyA} x2={cxA + 5} y2={cyA} stroke="hsl(45, 90%, 55%)" strokeWidth={2} />
-              <line x1={cxA} y1={cyA - 5} x2={cxA} y2={cyA + 5} stroke="hsl(45, 90%, 55%)" strokeWidth={2} />
-              <title>Centroid σ_a = {centroid.toFixed(3)}</title>
+          {wnValues.map(wn => (
+            <g key={`wn${wn}`}>
+              <circle cx={cx} cy={cy} r={wn * scale} fill="none" stroke="hsl(var(--muted-foreground) / 0.13)" strokeWidth={0.9} strokeDasharray="2 5" />
+              <text x={cx + 5} y={cy - wn * scale - 4} fill="hsl(var(--muted-foreground) / 0.4)" fontSize={8} fontFamily="monospace">
+                wn={wn}
+              </text>
             </g>
-          );
-        })()}
+          ))}
 
-        {/* Root locus branches */}
-        {loci.map((branch, b) => {
-          if (branch.length < 2) return null;
-          const color = branchColors[b % branchColors.length];
-          const d = branch
-            .filter(p => Math.abs(p.re) < maxAbs * 1.5 && Math.abs(p.im) < maxAbs * 1.5)
-            .map((p, i) => `${i === 0 ? "M" : "L"}${toX(p.re).toFixed(1)},${toY(p.im).toFixed(1)}`)
-            .join(" ");
-          return <path key={b} d={d} fill="none" stroke={color} strokeWidth={1.5} opacity={0.8} />;
-        })}
-
-        {/* Open-loop poles (×) */}
-        {olPoles.filter(p => !isNaN(p.re)).map((p, i) => {
-          const x = toX(p.re), y = toY(p.im);
-          return (
-            <g key={`p${i}`}>
-              <line x1={x - 5} y1={y - 5} x2={x + 5} y2={y + 5} stroke="hsl(var(--destructive))" strokeWidth={2} />
-              <line x1={x - 5} y1={y + 5} x2={x + 5} y2={y - 5} stroke="hsl(var(--destructive))" strokeWidth={2} />
-            </g>
-          );
-        })}
-
-        {/* Open-loop zeros (○) */}
-        {olZeros.filter(z => !isNaN(z.re)).map((z, i) => {
-          const x = toX(z.re), y = toY(z.im);
-          return (
-            <circle key={`z${i}`} cx={x} cy={y} r={5}
-              fill="none" stroke="hsl(var(--accent))" strokeWidth={2} />
-          );
-        })}
-
-        {/* Closed-loop poles at K (◆) */}
-        {clPoles.map((p, i) => {
-          const x = toX(p.re), y = toY(p.im);
-          const inBounds = Math.abs(p.re) < maxAbs * 1.5 && Math.abs(p.im) < maxAbs * 1.5;
-          if (!inBounds) return null;
-          return (
-            <g key={`cl${i}`}>
-              <circle cx={x} cy={y} r={7} fill="hsl(var(--warning) / 0.2)" stroke="hsl(var(--warning))" strokeWidth={2} />
-              <circle cx={x} cy={y} r={2.5} fill="hsl(var(--warning))" />
-            </g>
-          );
-        })}
-
-        {/* Breakaway / Break-in points (◆) */}
-        {breakawayPoints.map((bp, i) => {
-          const x = toX(bp.re), y = toY(0);
-          const color = bp.type === "breakaway" ? "hsl(320, 80%, 60%)" : "hsl(180, 80%, 50%)";
-          const size = 5;
-          return (
-            <g key={`bp${i}`}>
-              <polygon
-                points={`${x},${y - size} ${x + size},${y} ${x},${y + size} ${x - size},${y}`}
-                fill={`${color.replace(")", " / 0.3)")}`}
-                stroke={color}
-                strokeWidth={1.5}
+          {asymptotes && asymptotes.angles.map((angle, i) => {
+            const ax = toX(asymptotes.centroid);
+            const ay = toY(0);
+            const len = maxAbs * 1.8 * scale;
+            return (
+              <line
+                key={`asym${i}`}
+                x1={ax}
+                y1={ay}
+                x2={ax + Math.cos(angle) * len}
+                y2={ay - Math.sin(angle) * len}
+                stroke="hsl(var(--warning) / 0.38)"
+                strokeWidth={1}
+                strokeDasharray="7 5"
               />
-              <title>{bp.type === "breakaway" ? "Breakaway" : "Break-in"} at σ = {bp.re.toFixed(3)}</title>
+            );
+          })}
+
+          {loci.map((branch, branchIndex) => {
+            const visible = branch.filter(p => Math.abs(p.re) < maxAbs * 1.6 && Math.abs(p.im) < maxAbs * 1.6);
+            if (visible.length < 2) return null;
+            const d = visible.map((p, i) => `${i === 0 ? "M" : "L"}${toX(p.re).toFixed(1)},${toY(p.im).toFixed(1)}`).join(" ");
+            return (
+              <path
+                key={`branch${branchIndex}`}
+                d={d}
+                fill="none"
+                stroke={branchColors[branchIndex % branchColors.length]}
+                strokeWidth={2.4}
+                opacity={0.92}
+              />
+            );
+          })}
+
+          {breakawayPoints.map((bp, index) => (
+            <polygon
+              key={`break${index}`}
+              points={`${toX(bp.re)},${toY(0) - 5} ${toX(bp.re) + 5},${toY(0)} ${toX(bp.re)},${toY(0) + 5} ${toX(bp.re) - 5},${toY(0)}`}
+              fill="hsl(var(--warning) / 0.18)"
+              stroke="hsl(var(--warning))"
+              strokeWidth={1.5}
+            />
+          ))}
+
+          {olPoles.filter(p => !isNaN(p.re)).map((p, i) => (
+            <g key={`pole${i}`}>
+              <line x1={toX(p.re) - 6} y1={toY(p.im) - 6} x2={toX(p.re) + 6} y2={toY(p.im) + 6} stroke="hsl(var(--destructive))" strokeWidth={2.3} />
+              <line x1={toX(p.re) - 6} y1={toY(p.im) + 6} x2={toX(p.re) + 6} y2={toY(p.im) - 6} stroke="hsl(var(--destructive))" strokeWidth={2.3} />
             </g>
-          );
-        })}
+          ))}
 
-        {/* Direction arrows on branches */}
-        {loci.map((branch, b) => {
-          if (branch.length < 10) return null;
-          const mid = Math.floor(branch.length / 3);
-          const p0 = branch[mid], p1 = branch[mid + 1];
-          if (!p0 || !p1) return null;
-          const ax = toX(p0.re), ay = toY(p0.im);
-          const dx = toX(p1.re) - ax, dy = toY(p1.im) - ay;
-          const len = Math.sqrt(dx * dx + dy * dy);
-          if (len < 1) return null;
-          const ux = dx / len, uy = dy / len;
-          return (
-            <polygon key={`a${b}`}
-              points={`${ax + ux * 6},${ay + uy * 6} ${ax - uy * 3},${ay + ux * 3} ${ax + uy * 3},${ay - ux * 3}`}
-              fill={branchColors[b % branchColors.length]}
-            />
-          );
-        })}
+          {olZeros.filter(z => !isNaN(z.re)).map((z, i) => (
+            <circle key={`zero${i}`} cx={toX(z.re)} cy={toY(z.im)} r={6} fill="hsl(var(--background))" stroke="hsl(var(--accent))" strokeWidth={2.3} />
+          ))}
 
-        {/* Legend */}
-        <g transform={`translate(6, ${H - 36})`}>
-          <line x1={0} y1={0} x2={6} y2={6} stroke="hsl(var(--destructive))" strokeWidth={1.5} />
-          <line x1={6} y1={0} x2={0} y2={6} stroke="hsl(var(--destructive))" strokeWidth={1.5} />
-          <text x={10} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Poles</text>
-          <circle cx={42} cy={3} r={3} fill="none" stroke="hsl(var(--accent))" strokeWidth={1.5} />
-          <text x={48} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Zeros</text>
-          <circle cx={78} cy={3} r={4} fill="hsl(var(--warning) / 0.3)" stroke="hsl(var(--warning))" strokeWidth={1.5} />
-          <text x={85} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">K</text>
-          <polygon points="100,0 104,3 100,6 96,3" fill="hsl(320, 80%, 60% / 0.3)" stroke="hsl(320, 80%, 60%)" strokeWidth={1} />
-          <text x={108} y={6} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Brk</text>
-        </g>
-        <g transform={`translate(6, ${H - 34})`}>
-          <line x1={0} y1={0} x2={8} y2={0} stroke="hsl(var(--muted-foreground) / 0.35)" strokeWidth={1} strokeDasharray="3 2" />
-          <text x={12} y={3} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Asymptotes</text>
-          <line x1={72} y1={-3} x2={72} y2={3} stroke="hsl(45, 90%, 55%)" strokeWidth={1.5} />
-          <line x1={69} y1={0} x2={75} y2={0} stroke="hsl(45, 90%, 55%)" strokeWidth={1.5} />
-          <text x={79} y={3} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">Centroid</text>
-        </g>
-        <g transform={`translate(6, ${H - 24})`}>
-          <circle cx={4} cy={0} r={4} fill="none" stroke="hsl(var(--muted-foreground) / 0.25)" strokeWidth={0.7} strokeDasharray="2 3" />
-          <text x={12} y={3} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">ωn circles</text>
-          <line x1={72} y1={0} x2={80} y2={0} stroke="hsl(var(--muted-foreground) / 0.15)" strokeWidth={0.7} strokeDasharray="3 3" />
-          <text x={84} y={3} fill="hsl(var(--muted-foreground))" fontSize={7} fontFamily="monospace">ζ lines</text>
-        </g>
+          {controllerMarkers.zeros.map((z, i) => (
+            <g key={`cz${i}`}>
+              <circle cx={toX(z.re)} cy={toY(z.im)} r={10} fill="none" stroke="hsl(var(--primary))" strokeWidth={1.5} strokeDasharray="3 2" />
+              <text x={toX(z.re) + 12} y={toY(z.im) - 8} fill="hsl(var(--primary))" fontSize={8} fontFamily="monospace">{z.label}</text>
+            </g>
+          ))}
+          {controllerMarkers.poles.map((p, i) => (
+            <g key={`cp${i}`}>
+              <rect x={toX(p.re) - 9} y={toY(p.im) - 9} width={18} height={18} fill="none" stroke="hsl(var(--warning))" strokeWidth={1.5} strokeDasharray="3 2" />
+              <text x={toX(p.re) + 12} y={toY(p.im) + 12} fill="hsl(var(--warning))" fontSize={8} fontFamily="monospace">{p.label}</text>
+            </g>
+          ))}
 
-        {/* Crosshair */}
-        <SvgCrosshairLayer
-          bounds={{ x1: 0, y1: 0, x2: W, y2: H }}
-          fromX={(x) => ((x - cx) / scale).toFixed(2)}
-          fromY={(y) => (-(y - cy) / scale).toFixed(2)}
-          labelX="Re"
-          labelY="Im"
-          curvePoints={loci.flatMap(branch => branch.filter(p => Math.abs(p.re) < maxAbs * 1.5 && Math.abs(p.im) < maxAbs * 1.5).map(p => ({ x: toX(p.re), y: toY(p.im) })))}
-        />
-      </svg>
+          {clPoles.map((p, i) => (
+            <g key={`cl${i}`}>
+              <circle cx={toX(p.re)} cy={toY(p.im)} r={8} fill="hsl(var(--warning) / 0.2)" stroke="hsl(var(--warning))" strokeWidth={2} />
+              <circle cx={toX(p.re)} cy={toY(p.im)} r={2.5} fill="hsl(var(--warning))" />
+            </g>
+          ))}
 
-      {/* K Slider */}
-      <div className="px-2 space-y-1">
-        <div className="flex items-center justify-between text-[9px] font-mono gap-2">
-          <span className="text-muted-foreground">Gain K</span>
-          <div className="flex items-center gap-1.5">
-            <input
-              type="number"
-              value={kValue}
-              min={0}
-              max={kMax}
-              step={kMax / 500}
-              onChange={e => {
-                const v = parseFloat(e.target.value);
-                if (!isNaN(v) && v >= 0) setKValue(Math.min(v, kMax));
-              }}
-              className="w-16 text-[10px] font-mono bg-secondary/70 border border-border rounded px-1 py-0.5 text-foreground text-right focus:outline-none focus:border-primary"
-            />
-            <span className={`font-semibold ${isStableAtK ? "text-green-400" : "text-destructive"}`}>
-              {isStableAtK ? "✓ Stable" : "✗ Unstable"}
-            </span>
+          {loci.map((branch, branchIndex) => {
+            if (branch.length < 16) return null;
+            const p0 = branch[Math.floor(branch.length * 0.36)];
+            const p1 = branch[Math.floor(branch.length * 0.36) + 1];
+            if (!p0 || !p1) return null;
+            const ax = toX(p0.re);
+            const ay = toY(p0.im);
+            const dx = toX(p1.re) - ax;
+            const dy = toY(p1.im) - ay;
+            const len = Math.hypot(dx, dy);
+            if (len < 1) return null;
+            const ux = dx / len;
+            const uy = dy / len;
+            return (
+              <polygon
+                key={`arrow${branchIndex}`}
+                points={`${ax + ux * 8},${ay + uy * 8} ${ax - uy * 4},${ay + ux * 4} ${ax + uy * 4},${ay - ux * 4}`}
+                fill={branchColors[branchIndex % branchColors.length]}
+              />
+            );
+          })}
+
+          {hoverPoint && editMode !== "inspect" && (
+            <g pointerEvents="none">
+              <line x1={toX(hoverPoint.re)} y1={pad.t} x2={toX(hoverPoint.re)} y2={H - pad.b} stroke="hsl(var(--primary) / 0.45)" strokeDasharray="4 4" />
+              <line x1={pad.l} y1={toY(hoverPoint.im)} x2={W - pad.r} y2={toY(hoverPoint.im)} stroke="hsl(var(--primary) / 0.25)" strokeDasharray="4 4" />
+              {(editMode === "zero" || editMode === "pole") && (
+                <circle
+                  cx={toX(hoverPoint.re > -0.001 ? -Math.max(Math.abs(hoverPoint.re), 0.05) : hoverPoint.re)}
+                  cy={toY(0)}
+                  r={8}
+                  fill={editMode === "zero" ? "hsl(var(--primary) / 0.14)" : "hsl(var(--warning) / 0.14)"}
+                  stroke={editMode === "zero" ? "hsl(var(--primary))" : "hsl(var(--warning))"}
+                  strokeWidth={1.5}
+                />
+              )}
+            </g>
+          )}
+        </svg>
+      </div>
+
+      <aside className="space-y-3">
+        <div className="rounded-lg border border-border bg-card/35 p-3">
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Direct Placement</div>
+          <div className="grid grid-cols-3 gap-1.5">
+            <button type="button" onClick={() => setEditMode("inspect")} className={modeButtonClass("inspect")}>Inspect</button>
+            <button type="button" onClick={() => setEditMode("zero")} className={modeButtonClass("zero")}>+ Zero</button>
+            <button type="button" onClick={() => setEditMode("pole")} className={modeButtonClass("pole")}>+ Pole</button>
           </div>
+          <button type="button" onClick={() => setEditMode("target")} className={cn(modeButtonClass("target"), "mt-2 w-full")}>
+            Pick Target Gain
+          </button>
+          <p className="mt-2 text-[10px] leading-snug text-muted-foreground">
+            Zero/pole placement snaps to the real axis and updates the active controller form.
+          </p>
         </div>
-        <Slider
-          value={[kValue]}
-          onValueChange={([v]) => setKValue(v)}
-          min={0}
-          max={kMax}
-          step={kMax / 500}
-          className="w-full"
-        />
-        <div className="flex items-center justify-between text-[8px] text-muted-foreground font-mono">
-          <span>0</span>
-          <div className="flex gap-1">
-            {[10, 50, 100, 500, 1000].map(m => (
+
+        <div className="rounded-lg border border-border bg-card/35 p-3">
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Gain Optimizer</div>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="text-[9px] uppercase tracking-wide text-muted-foreground">
+              Target zeta
+              <input
+                aria-label="Target damping ratio"
+                type="number"
+                min={0.05}
+                max={0.99}
+                step={0.01}
+                value={targetZeta}
+                onChange={(event) => setTargetZeta(Math.max(0.05, Math.min(0.99, Number(event.target.value) || 0.7)))}
+                className="mt-1 w-full rounded border border-border bg-secondary/50 px-2 py-1 text-xs font-mono text-foreground outline-none focus:border-primary"
+              />
+            </label>
+            <label className="text-[9px] uppercase tracking-wide text-muted-foreground">
+              Target Ts
+              <input
+                aria-label="Target settling time"
+                type="number"
+                min={0.05}
+                step={0.05}
+                value={targetSettlingTime}
+                onChange={(event) => setTargetSettlingTime(Math.max(0.05, Number(event.target.value) || 2))}
+                className="mt-1 w-full rounded border border-border bg-secondary/50 px-2 py-1 text-xs font-mono text-foreground outline-none focus:border-primary"
+              />
+            </label>
+          </div>
+          <button type="button" onClick={optimizeGain} className="mt-2 w-full rounded border border-primary/35 bg-primary/10 px-2 py-1.5 text-[10px] font-semibold text-primary transition-colors hover:bg-primary/15">
+            Optimize K
+          </button>
+          <button type="button" onClick={commitGainToController} className="mt-2 w-full rounded border border-border bg-background/45 px-2 py-1.5 text-[10px] font-semibold text-foreground transition-colors hover:border-primary/35">
+            Commit K into C(s)
+          </button>
+        </div>
+
+        <div className="rounded-lg border border-border bg-card/35 p-3">
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Loop Gain</div>
+          <input
+            aria-label="Root locus gain"
+            type="number"
+            value={kValue}
+            min={0}
+            max={kMax}
+            step={kMax / 500}
+            onChange={(event) => {
+              const next = Number.parseFloat(event.target.value);
+              if (Number.isFinite(next) && next >= 0) setKValue(Math.min(next, kMax));
+            }}
+            className="mb-2 w-full rounded border border-border bg-secondary/50 px-2 py-1.5 text-right text-xs font-mono text-foreground outline-none focus:border-primary"
+          />
+          <Slider value={[kValue]} onValueChange={([value]) => setKValue(value)} min={0} max={kMax} step={kMax / 500} />
+          <div className="mt-2 flex flex-wrap gap-1 text-[9px] font-mono">
+            {[10, 50, 100, 500, 1000].map(limit => (
               <button
-                key={m}
-                onClick={() => { setKMaxState(m); if (kValue > m) setKValue(m); }}
-                className={`px-1 py-0.5 rounded ${kMax === m ? "bg-primary/20 text-primary" : "hover:text-foreground"}`}
+                key={limit}
+                type="button"
+                onClick={() => { setKMaxState(limit); if (kValue > limit) setKValue(limit); }}
+                className={cn(
+                  "rounded border px-1.5 py-0.5 transition-colors",
+                  kMax === limit ? "border-primary/40 bg-primary/10 text-primary" : "border-border text-muted-foreground hover:text-foreground"
+                )}
               >
-                {m}
+                {limit}
               </button>
             ))}
           </div>
-          <span>{kMax}</span>
         </div>
-        {/* CL pole positions */}
-        {clPoles.length > 0 && (
-          <div className="text-[8px] font-mono text-muted-foreground space-y-0.5 pt-1 border-t border-border/50">
-            <span className="text-[7px] uppercase tracking-wider">CL Poles at K={kValue.toFixed(1)}:</span>
-            {clPoles.map((p, i) => (
-              <div key={i} className={p.re > 1e-8 ? "text-destructive" : "text-foreground/80"}>
-                s{i + 1} = {p.re.toFixed(3)}{Math.abs(p.im) > 1e-10 ? ` ± j${Math.abs(p.im).toFixed(3)}` : ""}
+
+        <div className="rounded-lg border border-border bg-card/35 p-3">
+          <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Design Readout</div>
+          <div className="space-y-1 text-[10px] font-mono text-muted-foreground">
+            {clPoles.map((pole, index) => (
+              <div key={`readout${index}`} className={pole.re > 1e-8 ? "text-destructive" : "text-foreground/85"}>
+                s{index + 1} = {formatNumber(pole.re)}{Math.abs(pole.im) > 1e-8 ? ` ${pole.im >= 0 ? "+" : "-"} j${formatNumber(Math.abs(pole.im))}` : ""}
               </div>
             ))}
           </div>
-        )}
-        {/* Breakaway/Break-in points */}
-        {breakawayPoints.length > 0 && (
-          <div className="text-[8px] font-mono text-muted-foreground space-y-0.5 pt-1 border-t border-border/50">
-            <span className="text-[7px] uppercase tracking-wider">Breakaway/Break-in:</span>
-            {breakawayPoints.map((bp, i) => (
-              <div key={i} className="text-foreground/80">
-                <span style={{ color: bp.type === "breakaway" ? "hsl(320, 80%, 60%)" : "hsl(180, 80%, 50%)" }}>
-                  {bp.type === "breakaway" ? "◆ Away" : "◆ In"}
-                </span>{" "}
-                σ = {bp.re.toFixed(3)}
-              </div>
-            ))}
+          <div className="mt-2 rounded border border-border bg-background/35 px-2 py-1.5 text-[10px] leading-snug text-muted-foreground">
+            {designNote}
           </div>
-        )}
-        {/* Asymptote info */}
-        {asymptotes && (
-          <div className="text-[8px] font-mono text-muted-foreground space-y-0.5 pt-1 border-t border-border/50">
-            <span className="text-[7px] uppercase tracking-wider">Asymptotes ({asymptotes.n}P − {asymptotes.m}Z = {asymptotes.n - asymptotes.m}):</span>
-            <div className="text-foreground/80">
-              σ_a = {asymptotes.centroid.toFixed(3)}
+          {asymptotes && (
+            <div className="mt-2 text-[9px] font-mono text-muted-foreground">
+              centroid = {formatNumber(asymptotes.centroid)}; angles = {asymptotes.angles.map(angle => `${(angle * 180 / Math.PI).toFixed(0)}deg`).join(", ")}
             </div>
-            <div className="text-foreground/80">
-              θ = {asymptotes.angles.map(a => `${(a * 180 / Math.PI).toFixed(0)}°`).join(", ")}
-            </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      </aside>
     </div>
   );
 }
-
-// ─── Nichols Chart (SVG) ─────────────────────────────────────────────────────
 
 function NicholsChart({ result }: { result: SolverResult }) {
   const { data, margins } = useMemo(() => {
@@ -1858,18 +2081,103 @@ function NicholsChart({ result }: { result: SolverResult }) {
 
 type PlotTab = "pzmap" | "step" | "bode" | "nyquist" | "nichols" | "rlocus";
 
+const PLOT_TABS: { id: PlotTab; label: string; model: "closed" | "open" }[] = [
+  { id: "pzmap", label: "P-Z", model: "closed" },
+  { id: "step", label: "Step", model: "closed" },
+  { id: "bode", label: "Bode", model: "open" },
+  { id: "nyquist", label: "Nyquist", model: "open" },
+  { id: "nichols", label: "Nichols", model: "open" },
+  { id: "rlocus", label: "R.Locus", model: "open" },
+];
+
+function formatMetric(value: number, suffix = "", digits = 2): string {
+  if (value === Infinity) return `inf${suffix}`;
+  if (!Number.isFinite(value)) return `--${suffix}`;
+  return `${value.toFixed(digits)}${suffix}`;
+}
+
+function matlabCoeffVector(coeffs: readonly number[]): string {
+  return `[${[...coeffs].reverse().map((c) => Number(c.toFixed(6))).join(" ")}]`;
+}
+
+function controllerMatlabExpression(kind: ControllerKind, params: ControllerParams): string {
+  switch (kind) {
+    case "none":
+      return "C = tf(1,1);";
+    case "p":
+      return `C = pid(${params.kp.toFixed(4)});`;
+    case "pi":
+      return `C = pid(${params.kp.toFixed(4)},${params.ki.toFixed(4)});`;
+    case "pd":
+      return `C = pid(${params.kp.toFixed(4)},0,${params.kd.toFixed(4)});`;
+    case "pid":
+      return `C = pid(${params.kp.toFixed(4)},${params.ki.toFixed(4)},${params.kd.toFixed(4)});`;
+    case "lead":
+    case "lag":
+      return `C = ${params.gain.toFixed(4)}*tf([1 ${params.zero.toFixed(4)}],[1 ${params.pole.toFixed(4)}]);`;
+  }
+}
+
+function ParameterInput({
+  label,
+  value,
+  onChange,
+  min = 0,
+  step = 0.1,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+  min?: number;
+  step?: number;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </span>
+      <input
+        aria-label={label}
+        type="number"
+        value={Number.isFinite(value) ? value : 0}
+        min={min}
+        step={step}
+        onChange={(event) => {
+          const next = Number.parseFloat(event.target.value);
+          if (Number.isFinite(next)) onChange(next);
+        }}
+        className="w-full rounded border border-border bg-secondary/60 px-2 py-1.5 text-xs font-mono text-foreground outline-none transition-colors focus:border-primary"
+      />
+    </label>
+  );
+}
+
 export function AnalysisPlots({ result }: { result: SolverResult }) {
   const [tab, setTab] = React.useState<PlotTab>("pzmap");
+  const [controllerKind, setControllerKind] = React.useState<ControllerKind>("none");
+  const [params, setParams] = React.useState<ControllerParams>(DEFAULT_CONTROLLER_PARAMS);
   const plotRef = useRef<HTMLDivElement>(null);
 
-  const tabs: { id: PlotTab; label: string }[] = [
-    { id: "pzmap", label: "P-Z" },
-    { id: "step", label: "Step" },
-    { id: "bode", label: "Bode" },
-    { id: "nyquist", label: "Nyquist" },
-    { id: "nichols", label: "Nichols" },
-    { id: "rlocus", label: "R.Locus" },
-  ];
+  const design = useMemo(
+    () => buildControllerDesign(result.equivalentTF, controllerKind, params),
+    [result, controllerKind, params]
+  );
+
+  const isDirectStudy = controllerKind === "none";
+  const activePlotMeta = PLOT_TABS.find((item) => item.id === tab) ?? PLOT_TABS[0];
+  const openLoopResult = isDirectStudy ? result : design.openLoopResult;
+  const closedLoopResult = isDirectStudy ? result : design.closedLoopResult;
+  const activeResult = activePlotMeta.model === "closed" ? closedLoopResult : openLoopResult;
+  const margins = useMemo(
+    () => computeMargins(openLoopResult.equivalentTF.num, openLoopResult.equivalentTF.den),
+    [openLoopResult]
+  );
+  const controllerTf = design.controller;
+  const activeSpec = design.spec;
+
+  const updateParam = useCallback((key: keyof ControllerParams, value: number) => {
+    setParams((prev) => ({ ...prev, [key]: value }));
+  }, []);
 
   const handleExport = useCallback(async () => {
     if (!plotRef.current) return;
@@ -1890,10 +2198,196 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
     }
   }, [tab]);
 
+  const controllerParamControls = (() => {
+    switch (controllerKind) {
+      case "p":
+        return <ParameterInput label="Kp" value={params.kp} onChange={(value) => updateParam("kp", value)} />;
+      case "pi":
+        return (
+          <div className="grid grid-cols-2 gap-2">
+            <ParameterInput label="Kp" value={params.kp} onChange={(value) => updateParam("kp", value)} />
+            <ParameterInput label="Ki" value={params.ki} onChange={(value) => updateParam("ki", value)} />
+          </div>
+        );
+      case "pd":
+        return (
+          <div className="grid grid-cols-2 gap-2">
+            <ParameterInput label="Kp" value={params.kp} onChange={(value) => updateParam("kp", value)} />
+            <ParameterInput label="Kd" value={params.kd} onChange={(value) => updateParam("kd", value)} />
+          </div>
+        );
+      case "pid":
+        return (
+          <div className="grid grid-cols-3 gap-2">
+            <ParameterInput label="Kp" value={params.kp} onChange={(value) => updateParam("kp", value)} />
+            <ParameterInput label="Ki" value={params.ki} onChange={(value) => updateParam("ki", value)} />
+            <ParameterInput label="Kd" value={params.kd} onChange={(value) => updateParam("kd", value)} />
+          </div>
+        );
+      case "lead":
+      case "lag":
+        return (
+          <div className="grid grid-cols-3 gap-2">
+            <ParameterInput label="K" value={params.gain} onChange={(value) => updateParam("gain", value)} />
+            <ParameterInput label="Zero" value={params.zero} onChange={(value) => updateParam("zero", value)} min={0.001} />
+            <ParameterInput label="Pole" value={params.pole} onChange={(value) => updateParam("pole", value)} min={0.001} />
+          </div>
+        );
+      case "none":
+        return (
+          <div className="rounded border border-border bg-secondary/25 px-3 py-2 text-[11px] leading-snug text-muted-foreground">
+            Direct study uses the analyzed G_eq(s). Pick a controller to switch into unity-feedback design mode.
+          </div>
+        );
+    }
+  })();
+
+  const gainKey: keyof ControllerParams =
+    controllerKind === "lead" || controllerKind === "lag" ? "gain" : "kp";
+  const showGainSlider = controllerKind !== "none";
+
+  const matlabSnippet = [
+    `G = tf(${matlabCoeffVector(result.equivalentTF.num.coeffs)}, ${matlabCoeffVector(result.equivalentTF.den.coeffs)});`,
+    controllerMatlabExpression(controllerKind, params),
+    "L = C*G;",
+    "T = feedback(L,1);",
+    "controlSystemDesigner({'rlocus','bode','nichols'},G,C);",
+  ].join("\n");
+
   return (
     <div className="panel-section overflow-hidden">
-      <div className="flex border-b border-border items-center">
-        {tabs.map(t => (
+      <div className="border-b border-border bg-card/80 px-4 py-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <SlidersHorizontal className="h-4 w-4 text-primary" />
+              <h3 className="text-sm font-bold text-foreground">Controller Design Studio</h3>
+            </div>
+            <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+              Linked classical-design views for studying G_eq(s), shaping C(s)G(s), and checking T(s).
+            </p>
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-center text-[10px] sm:min-w-[330px]">
+            <div className="rounded border border-border bg-secondary/25 px-2 py-1.5">
+              <div className="text-muted-foreground">GM</div>
+              <div className="font-mono font-semibold text-foreground">{formatMetric(margins.gainMarginDb, " dB", 1)}</div>
+            </div>
+            <div className="rounded border border-border bg-secondary/25 px-2 py-1.5">
+              <div className="text-muted-foreground">PM</div>
+              <div className="font-mono font-semibold text-foreground">{formatMetric(margins.phaseMarginDeg, " deg", 1)}</div>
+            </div>
+            <div className="rounded border border-border bg-secondary/25 px-2 py-1.5">
+              <div className="text-muted-foreground">CL</div>
+              <div
+                className={cn(
+                  "font-mono font-semibold",
+                  closedLoopResult.stability === "stable"
+                    ? "text-success"
+                    : closedLoopResult.stability === "unstable"
+                      ? "text-destructive"
+                      : "text-warning"
+                )}
+              >
+                {closedLoopResult.stability.replace("_", " ")}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1.3fr)_minmax(280px,0.7fr)]">
+          <div className="space-y-3">
+            <div className="grid gap-1.5 sm:grid-cols-4 lg:grid-cols-7">
+              {CONTROLLER_SPECS.map((spec) => (
+                <button
+                  key={spec.kind}
+                  type="button"
+                  onClick={() => setControllerKind(spec.kind)}
+                  title={spec.useWhen}
+                  className={cn(
+                    "rounded border px-2 py-2 text-left transition-all",
+                    controllerKind === spec.kind
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border bg-secondary/20 text-muted-foreground hover:border-primary/30 hover:text-foreground"
+                  )}
+                >
+                  <div className="text-[10px] font-bold uppercase tracking-wide">{spec.shortLabel}</div>
+                  <div className="mt-0.5 text-[9px] leading-tight">{spec.label}</div>
+                </button>
+              ))}
+            </div>
+
+            <div className="rounded-lg border border-border bg-secondary/20 p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Target className="h-3.5 w-3.5 text-primary" />
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {isDirectStudy ? "Direct Model Study" : "Unity-Feedback Controller Design"}
+                  </span>
+                </div>
+                <span className="rounded border border-border bg-background/35 px-2 py-0.5 text-[9px] font-mono text-muted-foreground">
+                  {activeSpec.formula}
+                </span>
+              </div>
+              {controllerParamControls}
+              {showGainSlider && (
+                <div className="mt-3">
+                  <div className="mb-1 flex items-center justify-between text-[9px] font-mono text-muted-foreground">
+                    <span>{gainKey === "gain" ? "Compensator gain" : "Proportional gain"}</span>
+                    <span>{params[gainKey].toFixed(3)}</span>
+                  </div>
+                  <Slider
+                    value={[params[gainKey]]}
+                    onValueChange={([value]) => updateParam(gainKey, value)}
+                    min={0}
+                    max={50}
+                    step={0.05}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="rounded-lg border border-border bg-background/35 p-3">
+              <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                <Activity className="h-3.5 w-3.5 text-primary" />
+                Model Stack
+              </div>
+              <div className="space-y-2 text-[10px] font-mono">
+                <div className="rounded border border-border bg-secondary/20 px-2 py-1.5">
+                  <div className="text-muted-foreground">G(s)</div>
+                  <div className="break-all text-foreground">({result.display.num}) / ({result.display.den})</div>
+                </div>
+                <div className="rounded border border-border bg-secondary/20 px-2 py-1.5">
+                  <div className="text-muted-foreground">C(s)</div>
+                  <div className="break-all text-foreground">
+                    ({format(controllerTf.num)}) / ({format(controllerTf.den)})
+                  </div>
+                </div>
+                <div className="rounded border border-primary/25 bg-primary/5 px-2 py-1.5">
+                  <div className="text-muted-foreground">Active plot model</div>
+                  <div className="break-all text-foreground">
+                    {activePlotMeta.model === "open" ? "Open-loop L(s)" : isDirectStudy ? "Direct G_eq(s)" : "Closed-loop T(s)"}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <details className="rounded-lg border border-border bg-background/35 p-3">
+              <summary className="flex cursor-pointer items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                <Zap className="h-3.5 w-3.5 text-primary" />
+                MATLAB Export
+              </summary>
+              <pre className="mt-2 max-h-32 overflow-auto rounded border border-border bg-secondary/30 p-2 text-[9px] leading-relaxed text-muted-foreground">
+                {matlabSnippet}
+              </pre>
+            </details>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex border-b border-border items-center bg-background/70">
+        {PLOT_TABS.map(t => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
@@ -1902,6 +2396,7 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
                 ? "text-primary border-b-2 border-primary bg-primary/5"
                 : "text-muted-foreground hover:text-foreground"
             }`}
+            title={t.model === "open" ? "Uses open-loop L(s)=C(s)G(s)" : "Uses closed-loop T(s) or direct model"}
           >
             {t.label}
           </button>
@@ -1909,19 +2404,57 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
         <button
           onClick={handleExport}
           className="px-2 py-2 text-muted-foreground hover:text-primary transition-colors"
-          title="Export as PNG"
+          title="Export active plot as PNG"
         >
           <Download className="w-3.5 h-3.5" />
         </button>
       </div>
-      <div ref={plotRef} className="p-3 min-h-[220px] bg-background">
-        {tab === "pzmap" && <PoleZeroMap result={result} />}
-        {tab === "step" && <TimeResponsePlot result={result} />}
-        {tab === "bode" && <BodePlot result={result} />}
-        {tab === "nyquist" && <NyquistPlot result={result} />}
-        {tab === "nichols" && <NicholsChart result={result} />}
-        {tab === "rlocus" && <RootLocusPlot result={result} />}
+
+      <div className={cn("grid gap-3 p-3", tab === "rlocus" ? "xl:grid-cols-1" : "xl:grid-cols-[minmax(0,1fr)_220px]")}>
+        <div
+          ref={plotRef}
+          className={cn(
+            "rounded border border-border bg-background",
+            tab === "rlocus" ? "min-h-[560px] p-0" : "min-h-[250px] p-3"
+          )}
+        >
+          {tab === "pzmap" && <PoleZeroMap result={activeResult} />}
+          {tab === "step" && <TimeResponsePlot result={activeResult} />}
+          {tab === "bode" && <BodePlot result={activeResult} />}
+          {tab === "nyquist" && <NyquistPlot result={activeResult} />}
+          {tab === "nichols" && <NicholsChart result={activeResult} />}
+          {tab === "rlocus" && (
+            <RootLocusPlot
+              result={activeResult}
+              controllerKind={controllerKind}
+              controllerParams={params}
+              onControllerKindChange={setControllerKind}
+              onControllerParamChange={updateParam}
+            />
+          )}
+        </div>
+
+        {tab !== "rlocus" && (
+        <div className="rounded border border-border bg-secondary/20 p-3">
+          <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <GitBranch className="h-3.5 w-3.5 text-primary" />
+            Design Notes
+          </div>
+          <div className="space-y-2 text-[11px] leading-snug text-muted-foreground">
+            <p>{activeSpec.purpose}</p>
+            <p>{activeSpec.useWhen}</p>
+            <div className="rounded border border-border bg-background/40 px-2 py-1.5 font-mono text-[10px]">
+              {activePlotMeta.model === "open"
+                ? "Loop-shaping plot: tune C(s) against gain/phase behavior."
+                : isDirectStudy
+                  ? "Direct plot: current analyzed equivalent transfer function."
+                  : "Closed-loop plot: response after unity feedback."}
+            </div>
+          </div>
+        </div>
+        )}
       </div>
     </div>
   );
 }
+

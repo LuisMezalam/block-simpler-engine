@@ -10,6 +10,8 @@ const CATEGORIES: IdentityCategory[] = [
   "moving",
   "algebraic",
   "signal_flow",
+  "controllers",
+  "course_checks",
 ];
 
 export function SanityLibrary() {
@@ -23,6 +25,8 @@ export function SanityLibrary() {
       !search ||
       id.name.toLowerCase().includes(search.toLowerCase()) ||
       id.description.toLowerCase().includes(search.toLowerCase()) ||
+      id.support.toLowerCase().includes(search.toLowerCase()) ||
+      id.toolPath?.toLowerCase().includes(search.toLowerCase()) ||
       id.equivalent.toLowerCase().includes(search.toLowerCase());
     return catMatch && searchMatch;
   });
@@ -38,7 +42,7 @@ export function SanityLibrary() {
           </h2>
         </div>
         <p className="text-[11px] text-muted-foreground leading-snug">
-          {IDENTITIES.length} verified identities — CSUN Ch.1, Nise, Ogata, Franklin
+          {IDENTITIES.length} identities and course checks, marked as live, partial, or reference coverage.
         </p>
 
         {/* Search */}
