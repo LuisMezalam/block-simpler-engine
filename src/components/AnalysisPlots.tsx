@@ -9,6 +9,7 @@ import {
   type ControllerKind,
   type ControllerParams,
 } from "@/lib/controllerDesign";
+import { generateMatlabControlScript } from "@/lib/matlabExport";
 import { Slider } from "@/components/ui/slider";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis,
@@ -16,7 +17,7 @@ import {
   ReferenceArea,
 } from "recharts";
 import html2canvas from "html2canvas";
-import { Activity, Download, GitBranch, SlidersHorizontal, Target, Zap } from "lucide-react";
+import { Activity, Clipboard, Download, FileDown, GitBranch, SlidersHorizontal, Target, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 // ─── SVG Crosshair Layer ─────────────────────────────────────────────────────
 
@@ -2096,26 +2097,26 @@ function formatMetric(value: number, suffix = "", digits = 2): string {
   return `${value.toFixed(digits)}${suffix}`;
 }
 
-function matlabCoeffVector(coeffs: readonly number[]): string {
-  return `[${[...coeffs].reverse().map((c) => Number(c.toFixed(6))).join(" ")}]`;
-}
-
-function controllerMatlabExpression(kind: ControllerKind, params: ControllerParams): string {
-  switch (kind) {
-    case "none":
-      return "C = tf(1,1);";
-    case "p":
-      return `C = pid(${params.kp.toFixed(4)});`;
-    case "pi":
-      return `C = pid(${params.kp.toFixed(4)},${params.ki.toFixed(4)});`;
-    case "pd":
-      return `C = pid(${params.kp.toFixed(4)},0,${params.kd.toFixed(4)});`;
-    case "pid":
-      return `C = pid(${params.kp.toFixed(4)},${params.ki.toFixed(4)},${params.kd.toFixed(4)});`;
-    case "lead":
-    case "lag":
-      return `C = ${params.gain.toFixed(4)}*tf([1 ${params.zero.toFixed(4)}],[1 ${params.pole.toFixed(4)}]);`;
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Embedded preview browsers can deny clipboard writes when the page is not focused.
+    }
   }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+  return copied;
 }
 
 function ParameterInput({
@@ -2156,6 +2157,7 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
   const [tab, setTab] = React.useState<PlotTab>("pzmap");
   const [controllerKind, setControllerKind] = React.useState<ControllerKind>("none");
   const [params, setParams] = React.useState<ControllerParams>(DEFAULT_CONTROLLER_PARAMS);
+  const [matlabStatus, setMatlabStatus] = React.useState("");
   const plotRef = useRef<HTMLDivElement>(null);
 
   const design = useMemo(
@@ -2168,6 +2170,15 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
   const openLoopResult = isDirectStudy ? result : design.openLoopResult;
   const closedLoopResult = isDirectStudy ? result : design.closedLoopResult;
   const activeResult = activePlotMeta.model === "closed" ? closedLoopResult : openLoopResult;
+  const matlabScript = useMemo(
+    () => generateMatlabControlScript({
+      plant: result.equivalentTF,
+      controllerKind,
+      params,
+      openDesigner: true,
+    }),
+    [controllerKind, params, result.equivalentTF]
+  );
   const margins = useMemo(
     () => computeMargins(openLoopResult.equivalentTF.num, openLoopResult.equivalentTF.den),
     [openLoopResult]
@@ -2177,6 +2188,7 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
 
   const updateParam = useCallback((key: keyof ControllerParams, value: number) => {
     setParams((prev) => ({ ...prev, [key]: value }));
+    setMatlabStatus("");
   }, []);
 
   const handleExport = useCallback(async () => {
@@ -2197,6 +2209,22 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
       console.error("Export failed:", err);
     }
   }, [tab]);
+
+  const handleCopyMatlabScript = useCallback(async () => {
+    const copied = await copyTextToClipboard(matlabScript);
+    setMatlabStatus(copied ? "MATLAB script copied." : "Copy blocked; use Download .m instead.");
+  }, [matlabScript]);
+
+  const handleDownloadMatlabScript = useCallback(() => {
+    const blob = new Blob([matlabScript], { type: "text/x-matlab" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "block_simplifier_control_design.m";
+    link.click();
+    URL.revokeObjectURL(url);
+    setMatlabStatus("MATLAB .m script downloaded.");
+  }, [matlabScript]);
 
   const controllerParamControls = (() => {
     switch (controllerKind) {
@@ -2245,14 +2273,6 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
   const gainKey: keyof ControllerParams =
     controllerKind === "lead" || controllerKind === "lag" ? "gain" : "kp";
   const showGainSlider = controllerKind !== "none";
-
-  const matlabSnippet = [
-    `G = tf(${matlabCoeffVector(result.equivalentTF.num.coeffs)}, ${matlabCoeffVector(result.equivalentTF.den.coeffs)});`,
-    controllerMatlabExpression(controllerKind, params),
-    "L = C*G;",
-    "T = feedback(L,1);",
-    "controlSystemDesigner({'rlocus','bode','nichols'},G,C);",
-  ].join("\n");
 
   return (
     <div className="panel-section overflow-hidden">
@@ -2373,15 +2393,45 @@ export function AnalysisPlots({ result }: { result: SolverResult }) {
               </div>
             </div>
 
-            <details className="rounded-lg border border-border bg-background/35 p-3">
-              <summary className="flex cursor-pointer items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                <Zap className="h-3.5 w-3.5 text-primary" />
-                MATLAB Export
-              </summary>
-              <pre className="mt-2 max-h-32 overflow-auto rounded border border-border bg-secondary/30 p-2 text-[9px] leading-relaxed text-muted-foreground">
-                {matlabSnippet}
+            <div className="rounded-lg border border-border bg-background/35 p-3">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  <Zap className="h-3.5 w-3.5 text-primary" />
+                  MATLAB Bridge
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={handleCopyMatlabScript}
+                    className="flex items-center gap-1 rounded border border-border bg-secondary/25 px-2 py-1 text-[10px] font-semibold text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                    title="Copy MATLAB script"
+                  >
+                    <Clipboard className="h-3 w-3" />
+                    Copy
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDownloadMatlabScript}
+                    className="flex items-center gap-1 rounded border border-primary/30 bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary transition-colors hover:border-primary/60 hover:bg-primary/15"
+                    title="Download MATLAB script"
+                  >
+                    <FileDown className="h-3 w-3" />
+                    .m
+                  </button>
+                </div>
+              </div>
+              <div className="mb-2 rounded border border-primary/20 bg-primary/5 px-2 py-1.5 text-[10px] leading-snug text-muted-foreground">
+                Generates G(s), C(s), L(s), T(s), response plots, margins, and Control System Designer launch code.
+              </div>
+              <pre className="max-h-40 overflow-auto rounded border border-border bg-secondary/30 p-2 text-[9px] leading-relaxed text-muted-foreground">
+                {matlabScript}
               </pre>
-            </details>
+              {matlabStatus && (
+                <div className="mt-2 rounded border border-border bg-secondary/20 px-2 py-1 text-[10px] text-muted-foreground">
+                  {matlabStatus}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
